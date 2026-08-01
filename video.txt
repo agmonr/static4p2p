@@ -1,0 +1,492 @@
+Design: Decentralized Social Network with Privacy + Lawful Accountability
+Goal
+
+Create a decentralized P2P social platform combining:
+
+Instagram-style feed
+WhatsApp-style messaging
+Telegram-style channels
+P2P distributed storage
+End-to-end encryption
+Local-first operation
+Abuse reporting and lawful investigation capability
+
+Principle:
+
+Users control their data, the network has no single owner, but content has cryptographic accountability.
+
+1. High-Level Architecture
+                 Static PWA
+          HTML + JS + Service Worker
+
+                     |
+                     |
+
+             Identity Layer
+
+                     |
+        +------------+------------+
+        |                         |
+
+  Social Layer              Communication Layer
+
+  Feed                     Chat
+  Posts                    Voice
+  Comments                 Video calls
+  Channels
+
+        |                         |
+
+        +------------+------------+
+
+                 P2P Network
+
+              WebRTC / DHT
+
+                     |
+
+          Distributed Storage Layer
+
+          Text  -> replicated events
+          Media -> encrypted chunks
+2. Identity System
+
+Each user creates a permanent identity.
+
+Stored locally:
+
+{
+ userId:"hash(publicKey)",
+ publicKey:"...",
+ privateKey:"..."
+}
+
+Storage:
+
+IndexedDB
+
+identity
+contacts
+keys
+settings
+
+Private keys never leave the device.
+
+3. Account Trust Model
+
+Every action is signed.
+
+Example:
+
+Post:
+
+{
+ id:"post123",
+
+ author:"userABC",
+
+ timestamp:1750000000,
+
+ contentHash:"8af92",
+
+ signature:"..."
+}
+
+The network can verify:
+
+who created the content
+that it was not modified
+content history
+4. Social Graph
+
+Users maintain:
+
+following:
+    Alice
+    Bob
+    Carol
+
+
+followers:
+    David
+    Eve
+
+Stored locally:
+
+{
+ user:"Alice",
+
+ follows:[
+  "Bob",
+  "Carol"
+ ]
+}
+
+Relationship changes are signed events.
+
+5. Content Model
+
+Everything is an event.
+
+EVENT
+
+ |
+ +-- POST_CREATED
+ |
+ +-- COMMENT_CREATED
+ |
+ +-- MESSAGE_SENT
+ |
+ +-- REACTION_ADDED
+ |
+ +-- REPORT_CREATED
+
+Example:
+
+{
+ type:"POST_CREATED",
+
+ author:"Alice",
+
+ payload:
+ {
+  text:"Hello world",
+  imageHash:"abc123"
+ }
+}
+6. Local Storage
+Personal Data
+
+IndexedDB:
+
+/personal
+
+identity
+messages
+contacts
+bookmarks
+my_posts
+Distributed Cache
+
+IndexedDB:
+
+/network_cache
+
+chunk_0001
+chunk_0002
+chunk_0003
+
+Each node stores part of the network.
+
+Media Cache
+
+Cache API:
+
+/media
+
+image_hash
+video_hash
+voice_hash
+
+Automatic expiration.
+
+7. Distributed History
+
+History is divided into chunks.
+
+Chunk 000001
+
+post
+comment
+reaction
+
+
+Chunk 000002
+
+post
+comment
+
+Each chunk:
+
+{
+ hash:"abc123",
+
+ size:500KB,
+
+ timestamp:1750000000
+}
+8. P2P Synchronization
+
+Peers exchange only metadata first.
+
+Example:
+
+Node A:
+
+I have chunks:
+1-5000
+
+
+Node B:
+
+I have:
+1-5200
+
+
+Transfer:
+
+5001-5200
+
+Use:
+
+Merkle trees
+hashes
+incremental sync
+9. Network Topology
+
+No full mesh.
+
+Each node keeps limited connections:
+
+             Hub
+
+        /     |     \
+
+      A       B      C
+
+             |
+             D
+
+Node information:
+
+{
+ peerId:"abc",
+
+ connections:7,
+
+ maxConnections:20,
+
+ storage:500MB,
+
+ uptime:95%
+}
+10. Messaging
+
+WhatsApp-like:
+
+Private chat
+
+Alice <-----> Bob
+
+Encryption:
+
+Identity keys
+
+      |
+
+Session key
+
+      |
+
+AES-GCM messages
+11. Voice and Video
+
+Live communication:
+
+WebRTC
+
+Alice <==========> Bob
+
+No permanent storage.
+
+12. Media Distribution
+
+Large files:
+
+Video
+
+ |
+encrypt
+
+ |
+split chunks
+
+ |
+distributed storage
+
+ |
+P2P download
+
+Example:
+
+Video ABC
+
+Alice
+Bob
+Carol
+David
+
+Anyone may temporarily cache encrypted pieces.
+
+13. Privacy Layer
+
+Built into the protocol:
+
+Traffic mixing
+
+Nodes may relay:
+
+real message
++
+cache transfer
++
+padding traffic
+Replication
+
+Popular content:
+
+1 copy
+
+        |
+
+100 copies
+
+The source becomes harder to identify.
+
+14. Abuse Protection
+Reporting
+
+Users create signed reports:
+
+{
+ reporter:"user123",
+
+ content:"abc123",
+
+ reason:"illegal",
+
+ signature:"..."
+}
+Reputation
+
+Content score:
+
+positive votes
+negative reports
+trusted reports
+history
+
+Example:
+
+Score < threshold
+
+      |
+
+Stop automatic propagation
+15. Lawful Accountability Model
+
+Goal:
+
+Privacy for normal users, accountability for serious abuse.
+
+Model:
+
+Normal user
+
+   |
+   |
+Encrypted identity
+
+
+Serious abuse report
+
+   |
+   |
+Legal process
+
+   |
+   |
+Authorized investigation
+
+The system keeps:
+
+cryptographic signatures
+content provenance
+event history
+
+It does not expose everyone publicly.
+
+16. Content Lifecycle
+
+Example:
+
+User creates post
+
+        |
+
+Signed event
+
+        |
+
+Encrypted distribution
+
+        |
+
+Peers replicate
+
+        |
+
+Reports appear
+
+        |
+
+Network reputation changes
+
+        |
+
+Possible investigation
+17. Technology Stack
+
+Frontend:
+
+HTML
+CSS
+Vanilla JS
+PWA
+Service Worker
+
+Storage:
+
+IndexedDB
+Cache API
+
+Crypto:
+
+WebCrypto API
+AES-GCM
+ECDH
+Digital signatures
+
+Communication:
+
+WebRTC
+RTCDataChannel
+MediaStream
+
+Future:
+
+libp2p
+DHT
+IPFS-compatible storage
+Core Design Philosophy
+No central server
+        +
+Strong encryption
+        +
+User-owned data
+        +
+Distributed storage
+        +
+Cryptographic accountability
+
+The result is a decentralized social network that behaves like a combination of Instagram + WhatsApp + Telegram, but where the infrastructure belongs to the participants rather than a single company.

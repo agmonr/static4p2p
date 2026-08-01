@@ -1,0 +1,252 @@
++--------------------------------+
+| 🔍 Search                      |
++--------------------------------+
+| 🌳 Local Community             |
+|    12 new messages             |
++--------------------------------+
+| 👥 Neighborhood Group          |
+|    Bob: Look at this tree      |
++--------------------------------+
+| 📢 Public Channel              |
+|    235 members                 |
++--------------------------------+
+| 🔒 Private Chats               |
+|    Alice                       |
+|    David                       |
++--------------------------------+
+
+Four types of communication:
+
+1. Private chat
+2. Groups
+3. Channels
+4. Forums/topics
+1. Private Chat
+
+Like WhatsApp:
+
+Alice
+
+Alice:
+"Are you coming?"
+
+You:
+"Yes"
+
+
+🔒 End-to-end encrypted
+P2P connected
+
+Stored:
+
+IndexedDB:
+
+/private/alice
+
+messages
+keys
+attachments
+2. Groups
+
+Like WhatsApp groups:
+
+🏡 Garden Club
+
+Members:
+120
+
+Messages:
+
+Bob:
+"My avocado tree survived"
+
+Carol:
+"Mine too"
+
+Network:
+
+          Group
+
+            |
+     +------+------+ 
+     |      |      |
+    Bob   Alice  Carol
+
+No server owns the group.
+
+3. Channels
+
+Like Telegram:
+
+A broadcast model:
+
+📢 City Updates
+
+Admin posts:
+
+"Road closed tomorrow"
+
+Subscribers:
+10,000
+
+Topology:
+
+             Channel Owner
+
+                   |
+
+              Hub nodes
+
+          /      |       \
+
+       users   users    users
+
+Users can choose:
+
+store full history
+store recent history only
+4. Forum Mode
+
+The forum part becomes:
+
+🌱 Gardening
+
+Pinned:
+How to grow tomatoes
+
+Topics:
+
+🍅 Tomatoes
+🌳 Trees
+💧 Irrigation
+
+Each topic is actually:
+
+Channel + threaded discussions
+Content model
+
+Everything becomes an event:
+
+{
+ type:"message",
+
+ room:"garden",
+
+ author:"bob",
+
+ timestamp:123456,
+
+ content:
+ {
+   text:"My tree grew!"
+ }
+}
+
+Types:
+
+MESSAGE
+IMAGE_LINK
+VOICE
+POLL
+REACTION
+FILE_REFERENCE
+PIN
+MODERATION
+Images
+
+Like Telegram:
+
+Message:
+
+Bob:
+Look at this!
+
+[image preview]
+
+https://...
+
+Actual image:
+
+Cache API
+
+temporary
+
+expires when unused
+
+If important:
+
+Pin image
+
+keep locally
+Voice messages
+
+Add:
+
+Hold to record
+
+     🎙️
+
+send
+
+Stored:
+
+voice message
+
+encrypted blob
+
+distributed like chunks
+Search
+
+Because each user has local history:
+
+Search is instant:
+
+🔍 avocado
+
+Results:
+
+2026-07-01 Bob:
+"my avocado tree"
+
+2026-07-20 Alice:
+"avocado harvest"
+
+No server query.
+
+Presence
+
+Like WhatsApp:
+
+Alice
+🟢 online
+
+Bob
+last seen 10 minutes ago
+
+But:
+
+presence is optional
+and privacy controlled
+User experience
+
+A user should not know the complexity:
+
+They see:
+
+WhatsApp simplicity
++
+Telegram channels
++
+Reddit discussions
++
+Git-like history replication
+
+Underneath:
+
+P2P network
+WebRTC
+IndexedDB
+cryptographic identity
+distributed chunks
+
+The interesting part is that the forum is no longer a separate thing. In this model, a "forum thread" is just a special type of conversation with long-term distributed history. This makes the system much simpler because chat, groups, and forums all use the same underlying message/event engine.

@@ -1,0 +1,303 @@
+Project: Decentralized P2P Chat + Voice Static Web App
+Goal
+
+Create a static webpage (deployable on GitHub Pages or any static hosting) that enables:
+
+1-to-1 encrypted chat
+voice communication
+optional group communication
+no backend owned by the application
+P2P-first architecture
+decentralized discovery/fallback
+Architecture
+                Static Web App
+             (HTML + JS + Service Worker)
+
+                       |
+                       |
+        +--------------+--------------+
+        |                             |
+ Identity Layer                Connection Layer
+        |                             |
+ Public/Private Keys             WebRTC
+        |                             |
+        |                       DataChannel
+        |                       MediaStream
+        |
+ Peer Discovery
+ (DHT/libp2p compatible design)
+
+                       |
+                       |
+              Encrypted Session
+                       |
+                       |
+              Chat + Voice
+Components
+1. Local Identity Manager
+
+Create a permanent identity on first launch.
+
+Store locally:
+
+{
+  userId: "hash(publicKey)",
+  publicKey: "...",
+  privateKey: "..."
+}
+
+Storage:
+
+IndexedDB
+never localStorage for private keys
+
+Functions:
+
+createIdentity()
+loadIdentity()
+exportIdentity()
+importIdentity()
+2. Contact System
+
+A contact contains:
+
+{
+  name:"Alice",
+  peerId:"abc123",
+  publicKey:"...",
+  lastKnownAddress:"...",
+  trustLevel:"verified"
+}
+
+Store:
+
+IndexedDB
+ |
+ +-- contacts
+ +-- messages
+ +-- keys
+3. Initial Pairing
+
+Support:
+
+QR pairing
+
+Device A:
+
+Create invitation
+
+Generate:
+
+{
+ peerId,
+ publicKey,
+ signalingData
+}
+
+Encode as QR.
+
+Device B scans.
+
+Then:
+
+A <--------------> B
+
+exchange identity keys
+verify fingerprint
+save contact
+4. WebRTC Connection Layer
+
+Use:
+
+RTCPeerConnection
+RTCDataChannel
+MediaStream
+
+Functions:
+
+connect(peer)
+
+sendMessage()
+
+startVoice()
+
+stopVoice()
+
+disconnect()
+
+Channels:
+
+DataChannel:
+- chat
+- control
+- presence
+
+MediaStream:
+- voice
+5. Secure Session Layer
+
+Create an application-level secure session.
+
+After WebRTC connection:
+
+A                         B
+
+public key exchange
+
+        |
+        v
+
+derive session key
+
+        |
+        v
+
+encrypted messages
+
+Every message:
+
+{
+ sender,
+ timestamp,
+ nonce,
+ encryptedPayload,
+ signature
+}
+6. Peer Discovery Module
+
+Create an abstraction:
+
+DiscoveryProvider
+{
+ publishPeer()
+
+ findPeer()
+
+ updateAddress()
+}
+
+Possible implementations:
+
+Local:
+QR
+
+Future:
+libp2p DHT
+IPFS
+BitTorrent DHT
+
+The application should work without this initially.
+
+7. Offline Message Fallback
+
+If peer unavailable:
+
+Store encrypted message:
+
+{
+ recipientId,
+ encryptedMessage,
+ expiration
+}
+
+Possible future backends:
+
+libp2p storage
+IPFS
+peer relay nodes
+8. Traffic Padding Layer (optional)
+
+Add a module:
+
+TrafficManager
+{
+ sendPadding()
+ adjustInterval()
+}
+
+Purpose:
+
+reduce obvious timing patterns
+normalize packet sizes
+
+Do not delay real messages unnecessarily.
+
+9. Group Communication
+
+Topology:
+
+             A
+          /  |  \
+         B   C   D
+
+Each peer maintains:
+
+{
+ connectedPeers:[],
+ maxPeers:5,
+ latency,
+ bandwidth
+}
+
+When full:
+
+reject new child
+suggest another peer
+10. Offline-first PWA
+
+Add:
+
+manifest.json
+service-worker.js
+
+Features:
+
+install on phone
+run offline
+keep contacts locally
+cache application
+Suggested technology stack
+
+Frontend:
+
+HTML
+CSS
+Vanilla JS
+
+Storage:
+
+IndexedDB
+
+Crypto:
+
+Web Crypto API
+
+Communication:
+
+WebRTC
+
+Optional future:
+
+libp2p
+DHT
+IPFS
+Development phases
+Phase 1
+Static page
+Generate identity
+QR pairing
+WebRTC text chat
+Phase 2
+Voice calls
+Contact management
+Message history
+Phase 3
+Multi-peer groups
+Relay logic
+Peer health monitoring
+Phase 4
+DHT discovery
+Offline delivery
+decentralized fallback
+
+This design keeps the first version simple: a static page that creates trusted P2P WebRTC connections, while leaving room to evolve into a decentralized network later.
