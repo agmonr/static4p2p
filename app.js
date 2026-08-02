@@ -788,8 +788,14 @@
     try {
       const obj = await decodePayload(token);
       if (obj.t === 'o' && obj.m) {
+        // Fresh offer - abandon whatever connection we had before starting
+        // a new one. An answer ('a', handled below) must NOT do this: it
+        // belongs to the pc we already have and applying it needs that pc
+        // still alive.
+        if (pc) { try { pc.close(); } catch (err) { /* already closed */ } pc = null; channel = null; }
         await startAsMirrorViewer(obj.s);
       } else if (obj.t === 'o') {
+        if (pc) { try { pc.close(); } catch (err) { /* already closed */ } pc = null; channel = null; }
         await startAsInvitee(obj.s);
       } else if (obj.t === 'a') {
         await applyAnswer(rawText);
@@ -1135,10 +1141,13 @@
   document.getElementById('btn-cancel-scan').addEventListener('click', stopScan);
 
   document.getElementById('btn-scan-instead').addEventListener('click', () => {
-    startScan((data) => {
-      if (pc) { pc.close(); pc = null; channel = null; }
-      route(data);
-    });
+    // route() itself decides whether to close the current pc - it must
+    // NOT be closed here unconditionally, since this button is also how
+    // an inviter who never tapped copy/send (pure in-person QR-to-QR,
+    // still sitting on their own invite screen) scans their friend's
+    // answer back. Closing pc first would null out the very connection
+    // that answer needs to attach to.
+    startScan((data) => route(data));
   });
 
   document.getElementById('btn-scan-answer').addEventListener('click', () => {
@@ -1189,7 +1198,9 @@
         && !document.getElementById('receive-answer-box').hidden) {
       applyAnswer(data);
     } else if (document.getElementById('screen-invite').classList.contains('active')) {
-      if (pc) { pc.close(); pc = null; channel = null; }
+      // Same reasoning as btn-scan-instead below: route() decides whether
+      // to close pc, since a pasted image here might be an answer for the
+      // pc we already have, not a fresh offer.
       route(data);
     } else {
       showToast('הודבק ברקוד אך אין כרגע מסך שמצפה לו');
