@@ -145,8 +145,10 @@
           await navigator.share({ files: [file], text: shareText });
           return true;
         }
+        console.warn('shareQrImage: canShare({files}) returned false - falling back to text link');
       } catch (err) {
         if (err.name === 'AbortError') return true; // user dismissed the share sheet - don't also fall back
+        console.warn('shareQrImage: navigator.share failed, falling back to text link:', err.name, err.message);
       }
     }
     return false;
@@ -1026,15 +1028,16 @@
 
   document.getElementById('btn-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('invite-link').value;
-    // Reserved synchronously, inside the click gesture, in case we need
-    // the text-link fallback - opening a tab after an await risks the
-    // browser treating it as an unrequested popup and blocking it.
-    const win = window.open('', '_blank');
+    // Try the image share FIRST, using the click's user-activation while
+    // it's still fresh - calling window.open() before navigator.share()
+    // (both need "user activation") was found to make share() fail
+    // silently, always falling back to the text-only link even on
+    // browsers that do support sharing files. Only open a tab for the
+    // text-link fallback once we know we actually need it.
     const shared = await shareQrImage('qr-container', link, 'סרקו כדי להתחבר');
-    if (shared) {
-      if (win) win.close();
-    } else if (win) {
-      win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
+    if (!shared) {
+      const win = window.open('', '_blank');
+      if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
     }
     afterShare();
   });
@@ -1117,12 +1120,12 @@
   });
   document.getElementById('btn-mirror-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('mirror-link').value;
-    const win = window.open('', '_blank');
+    // Same ordering fix as btn-whatsapp above - share() first, while
+    // user-activation is still fresh.
     const shared = await shareQrImage('mirror-qr-container', link, 'סרקו כדי להתחבר לשיקוף');
-    if (shared) {
-      if (win) win.close();
-    } else if (win) {
-      win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
+    if (!shared) {
+      const win = window.open('', '_blank');
+      if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
     }
   });
   document.getElementById('btn-mirror-apply-answer').addEventListener('click', () => {
