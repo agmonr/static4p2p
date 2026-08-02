@@ -78,6 +78,39 @@
     return location.origin + location.pathname + '#p=' + token;
   }
 
+  // ---------- link shortening (WhatsApp share only - cosmetic, best-effort) ----------
+  //
+  // The SDP payload link can run 700+ chars, which reads as a wall of
+  // noise in a WhatsApp message. No shortener owned by this app - two
+  // public, no-signup services (same "public infra, not app-owned"
+  // tradeoff already made for the tracker reconnect feature) are tried in
+  // turn; if both are unreachable (offline, blocked), callers fall back to
+  // the full link, so pairing still works without them.
+
+  function fetchWithTimeout(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, Object.assign({}, options, { signal: controller.signal })).finally(() => clearTimeout(t));
+  }
+
+  async function shortenLink(longUrl) {
+    // tinyurl first: in testing, is.gd's free API frequently returned
+    // "Error, database insert failed" (HTTP 200, so failures don't even
+    // throw - checked explicitly below) for brand-new long URLs, while
+    // tinyurl was consistently reliable.
+    try {
+      const res = await fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl), {}, 4000);
+      const text = (await res.text()).trim();
+      if (/^https:\/\//.test(text)) return text;
+    } catch (err) { /* try next service */ }
+    try {
+      const res = await fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encodeURIComponent(longUrl), {}, 4000);
+      const data = await res.json();
+      if (data && data.shorturl) return data.shorturl;
+    } catch (err) { /* fall back to the full link */ }
+    return null;
+  }
+
   // ---------- binary/hash helpers (used by tracker reconnect) ----------
 
   function randomBytes(n) {
@@ -887,9 +920,14 @@
     afterShare();
   });
 
-  document.getElementById('btn-whatsapp').addEventListener('click', () => {
+  document.getElementById('btn-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('invite-link').value;
-    window.open('https://wa.me/?text=' + encodeURIComponent(link), '_blank');
+    // Open the tab synchronously (still inside the click gesture) and
+    // redirect it once we have a link - opening after the await risks the
+    // browser treating it as an unrequested popup and blocking it.
+    const win = window.open('', '_blank');
+    const shortLink = (await shortenLink(link)) || link;
+    if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(shortLink);
     afterShare();
   });
 
@@ -969,9 +1007,11 @@
   document.getElementById('btn-mirror-copy').addEventListener('click', () => {
     copyToClipboard(document.getElementById('mirror-link').value);
   });
-  document.getElementById('btn-mirror-whatsapp').addEventListener('click', () => {
+  document.getElementById('btn-mirror-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('mirror-link').value;
-    window.open('https://wa.me/?text=' + encodeURIComponent(link), '_blank');
+    const win = window.open('', '_blank');
+    const shortLink = (await shortenLink(link)) || link;
+    if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(shortLink);
   });
   document.getElementById('btn-mirror-apply-answer').addEventListener('click', () => {
     const text = document.getElementById('mirror-answer-input').value;
