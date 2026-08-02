@@ -1,6 +1,16 @@
 (() => {
   'use strict';
 
+  // STUN alone can't traverse symmetric/carrier-grade NAT, which many
+  // cellular networks use - it can discover a public address but can't
+  // predict the port a peer-to-peer packet would arrive on, so direct
+  // connection attempts silently fail when one peer is on cellular. Only
+  // a relay in the middle (TURN) fixes that, and this app has none
+  // configured - every commonly-cited "free public TURN" server tested
+  // (openrelay.metered.ca, expressturn, numb.viagenie.ca) turned out to
+  // be dead or rejecting the well-known demo credentials. Needs a real
+  // TURN credential (self-hosted coturn, or a signed-up free tier like
+  // Cloudflare/Metered/Twilio) to fix properly - see todo.txt phase 4.
   const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
   const HISTORY_KEY = 'p2p_chat_history';
   const FILE_CHUNK_SIZE = 16 * 1024;
