@@ -88,7 +88,14 @@ html, body {
   align-items: center;
   justify-content: center;
   position: relative;
-  overflow: hidden;
+  /* No overflow:hidden here on purpose - it clipped the actual QR on
+     Firefox and mobile Chrome (reported: fine on desktop Chrome, broken
+     everywhere else), almost certainly some cross-engine/DPI rounding
+     difference in how the <img> (height:auto, scaled from a
+     devicePixelRatio-sized canvas) resolves to a few px taller/wider than
+     the card's content box. The banner below gets its own rounded top
+     corners instead of relying on the card to clip it - safer than
+     risking the actual scannable QR getting cut off. */
 }
 
 /* Decorative only - the actual QR is grabbed straight from its own canvas
@@ -106,6 +113,7 @@ html, body {
   font-weight: 700;
   font-size: 14px;
   letter-spacing: 0.2px;
+  border-radius: 20px 20px 0 0;
 }
 
 .qr-card-confetti {
