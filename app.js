@@ -8,6 +8,10 @@
   const FILE_BUFFERED_LOW = 500_000;
   const TRACKER_URLS = ['wss://tracker.openwebtorrent.com', 'wss://tracker.btorrent.xyz'];
   const TRACKER_TIMEOUT_MS = 20000;
+  // Generous: needs to survive a real "switch to WhatsApp, send, switch
+  // back" round trip on mobile, where a background tab's timers get
+  // throttled and only really resume once the user returns anyway.
+  const CONNECT_STUCK_TIMEOUT_MS = 45000;
 
   let pc = null;
   let channel = null;
@@ -574,11 +578,35 @@
   function createPeerConnection() {
     const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     let disconnectTimer = null;
+    // 'checking' can otherwise sit forever with no further state change and
+    // no feedback: on mobile, backgrounding this tab to send the answer via
+    // WhatsApp commonly stalls the handshake (throttled/suspended tab) well
+    // short of ever reaching 'failed'. One watchdog, armed the first time
+    // checking actually starts, guarantees *some* resolution - success
+    // clears it, otherwise the user gets a clear retry prompt instead of a
+    // silent spinner.
+    let stuckTimer = null;
     conn.oniceconnectionstatechange = () => {
       const state = conn.iceConnectionState;
-      if (state === 'checking' && hasShared) showScreen('connecting');
+      if (state === 'checking') {
+        if (hasShared) showScreen('connecting');
+        if (!stuckTimer) {
+          stuckTimer = setTimeout(() => {
+            const s = conn.iceConnectionState;
+            if (s !== 'connected' && s !== 'completed') {
+              showError('החיבור נתקע - ייתכן שבעקבות מעבר בין אפליקציות בנייד. נסו לשלוח שוב את הקוד, או התחילו הזמנה חדשה.');
+            }
+          }, CONNECT_STUCK_TIMEOUT_MS);
+        }
+      }
+      if (state === 'connected' || state === 'completed') {
+        clearTimeout(stuckTimer);
+        stuckTimer = null;
+      }
       if (state === 'failed') {
         clearTimeout(disconnectTimer);
+        clearTimeout(stuckTimer);
+        stuckTimer = null;
         showError('החיבור נכשל. נסו ליצור הזמנה חדשה.');
       } else if (state === 'disconnected') {
         // Transient - WebRTC can and often does recover from this on its
