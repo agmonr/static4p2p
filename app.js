@@ -6,12 +6,16 @@
   const FILE_CHUNK_SIZE = 16 * 1024;
   const FILE_BUFFERED_HIGH = 1_000_000;
   const FILE_BUFFERED_LOW = 500_000;
+  const TRACKER_URLS = ['wss://tracker.openwebtorrent.com', 'wss://tracker.btorrent.xyz'];
+  const TRACKER_TIMEOUT_MS = 20000;
 
   let pc = null;
   let channel = null;
   let myRole = null; // 'inviter' | 'invitee' | 'mirror-viewer'
   let hasShared = false; // becomes true once the user copies/sends their link
   let isMirrorViewer = false;
+  let isReconnectAttempt = false; // true when pc came from tracker reconnect, not a fresh QR pairing
+  let pendingTrackerOfferId = null;
 
   let mirrorPc = null;
   let mirrorChannel = null;
@@ -74,6 +78,40 @@
     return location.origin + location.pathname + '#p=' + token;
   }
 
+  // ---------- binary/hash helpers (used by tracker reconnect) ----------
+
+  function randomBytes(n) {
+    const b = new Uint8Array(n);
+    crypto.getRandomValues(b);
+    return b;
+  }
+
+  function bytesToHex(bytes) {
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function hexToBytes(hex) {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return bytes;
+  }
+
+  // BitTorrent tracker wire protocol encodes 20-byte fields (info_hash,
+  // peer_id, offer_id) as JSON strings where each character's code point
+  // is one raw byte (0-255) - not base64, not UTF-8 text. This round-trips
+  // correctly through JSON.stringify/parse because those byte values are
+  // valid (if unprintable) UTF-16 code units.
+  function bytesToBinaryStr(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  }
+
+  async function sha1Bytes(bytes) {
+    const digest = await crypto.subtle.digest('SHA-1', bytes);
+    return new Uint8Array(digest);
+  }
+
   // ---------- screen management ----------
 
   function showScreen(id) {
@@ -127,6 +165,340 @@
     document.getElementById('btn-scan-instead').hidden = myRole !== 'inviter';
     renderQR(document.getElementById('qr-container'), link);
     showScreen('invite');
+
+    const tagInput = document.getElementById('invite-tag');
+    currentHistoryId = addLinkHistoryEntry(myRole, link, tagInput.value.trim());
+  }
+
+  // ---------- link history (localStorage - persists across app restarts) ----------
+  //
+  // A saved link cannot actually be reused to reconnect: each
+  // RTCPeerConnection mints its own DTLS certificate and ICE
+  // ufrag/password, and those die with the page. This is a log for
+  // reference/tagging only, never presented as "tap to reconnect".
+
+  const LINK_HISTORY_KEY = 'p2p_link_history';
+  let currentHistoryId = null;
+
+  function getLinkHistory() {
+    try { return JSON.parse(localStorage.getItem(LINK_HISTORY_KEY) || '[]'); } catch (err) { return []; }
+  }
+
+  function setLinkHistory(list) {
+    localStorage.setItem(LINK_HISTORY_KEY, JSON.stringify(list));
+  }
+
+  function addLinkHistoryEntry(role, link, tag) {
+    const history = getLinkHistory();
+    const id = 'h' + Date.now() + Math.random().toString(36).slice(2, 6);
+    history.unshift({ id, role, link, tag: tag || '', createdAt: Date.now() });
+    if (history.length > 50) history.length = 50;
+    setLinkHistory(history);
+    return id;
+  }
+
+  function updateLinkHistoryTag(id, tag) {
+    const history = getLinkHistory();
+    const entry = history.find((h) => h.id === id);
+    if (entry) { entry.tag = tag; setLinkHistory(history); }
+  }
+
+  function deleteLinkHistoryEntry(id) {
+    setLinkHistory(getLinkHistory().filter((h) => h.id !== id));
+    renderHistoryList();
+  }
+
+  function getLastTag() {
+    const history = getLinkHistory();
+    return history.length ? history[0].tag : '';
+  }
+
+  function roleLabel(role) {
+    if (role === 'inviter') return 'הזמנה שלי';
+    if (role === 'invitee') return 'אישור שלי';
+    if (role === 'mirror-viewer') return 'אישור שיקוף';
+    return role;
+  }
+
+  function renderHistoryList() {
+    const container = document.getElementById('history-list');
+    const history = getLinkHistory();
+    container.innerHTML = '';
+    if (!history.length) {
+      const empty = document.createElement('p');
+      empty.className = 'history-empty';
+      empty.textContent = 'אין עדיין קישורים שמורים.';
+      container.appendChild(empty);
+      return;
+    }
+    history.forEach((entry) => {
+      const el = document.createElement('div');
+      el.className = 'history-entry';
+
+      const top = document.createElement('div');
+      top.className = 'history-entry-top';
+      const tagInput = document.createElement('input');
+      tagInput.className = 'history-tag-input';
+      tagInput.placeholder = 'תיוג';
+      tagInput.value = entry.tag;
+      tagInput.addEventListener('change', () => updateLinkHistoryTag(entry.id, tagInput.value.trim()));
+      const role = document.createElement('span');
+      role.className = 'history-role';
+      role.textContent = roleLabel(entry.role);
+      top.appendChild(tagInput);
+      top.appendChild(role);
+
+      const meta = document.createElement('div');
+      meta.className = 'history-meta';
+      const date = document.createElement('span');
+      date.textContent = new Date(entry.createdAt).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+      const actions = document.createElement('div');
+      actions.className = 'history-actions';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.textContent = '📋';
+      copyBtn.setAttribute('aria-label', 'העתק קישור');
+      copyBtn.addEventListener('click', () => copyToClipboard(entry.link).then(() => showToast('הועתק')));
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = '🗑';
+      delBtn.setAttribute('aria-label', 'מחק');
+      delBtn.addEventListener('click', () => deleteLinkHistoryEntry(entry.id));
+      actions.appendChild(copyBtn);
+      actions.appendChild(delBtn);
+      meta.appendChild(date);
+      meta.appendChild(actions);
+
+      el.appendChild(top);
+      el.appendChild(meta);
+      container.appendChild(el);
+    });
+  }
+
+  document.getElementById('btn-open-history').addEventListener('click', () => {
+    renderHistoryList();
+    document.getElementById('history-modal').hidden = false;
+  });
+  document.getElementById('btn-close-history').addEventListener('click', () => {
+    document.getElementById('history-modal').hidden = true;
+  });
+  document.getElementById('invite-tag').addEventListener('change', (e) => {
+    if (currentHistoryId) updateLinkHistoryTag(currentHistoryId, e.target.value.trim());
+  });
+
+  // ---------- contacts (persistent shared secret, enables tracker reconnect) ----------
+  //
+  // Established the first time a QR/link pairing actually connects: the
+  // inviter generates a random secret and sends it once over the freshly
+  // opened DataChannel; both sides then save it locally under whatever tag
+  // they typed on their own invite screen. Never derived from anything
+  // public (like a public key) - reconnectViaTracker() below turns this
+  // into an infohash, and a secret is what keeps that infohash unguessable
+  // by anyone else watching the public tracker.
+
+  const CONTACTS_KEY = 'p2p_contacts';
+
+  function getContacts() {
+    try { return JSON.parse(localStorage.getItem(CONTACTS_KEY) || '[]'); } catch (err) { return []; }
+  }
+
+  function setContacts(list) {
+    localStorage.setItem(CONTACTS_KEY, JSON.stringify(list));
+  }
+
+  function saveContact(tag, secretHex) {
+    const contacts = getContacts();
+    const existing = contacts.find((c) => c.secret === secretHex);
+    if (existing) {
+      existing.lastConnectedAt = Date.now();
+      if (tag) existing.tag = tag;
+      setContacts(contacts);
+      return existing.id;
+    }
+    const id = 'c' + Date.now() + Math.random().toString(36).slice(2, 6);
+    contacts.unshift({ id, tag: tag || 'ללא שם', secret: secretHex, createdAt: Date.now(), lastConnectedAt: Date.now() });
+    setContacts(contacts);
+    return id;
+  }
+
+  function deleteContact(id) {
+    setContacts(getContacts().filter((c) => c.id !== id));
+    renderContactsList();
+  }
+
+  function renderContactsList() {
+    const container = document.getElementById('contacts-list');
+    const contacts = getContacts();
+    container.innerHTML = '';
+    if (!contacts.length) {
+      const empty = document.createElement('p');
+      empty.className = 'history-empty';
+      empty.textContent = 'אין עדיין אנשי קשר שמורים. אנשי קשר נשמרים אוטומטית אחרי חיבור מוצלח.';
+      container.appendChild(empty);
+      return;
+    }
+    contacts.forEach((contact) => {
+      const el = document.createElement('div');
+      el.className = 'history-entry';
+
+      const top = document.createElement('div');
+      top.className = 'history-entry-top';
+      const name = document.createElement('span');
+      name.className = 'contact-name';
+      name.textContent = contact.tag;
+      const reconnectBtn = document.createElement('button');
+      reconnectBtn.type = 'button';
+      reconnectBtn.className = 'btn btn-primary btn-sm';
+      reconnectBtn.textContent = '🔄 התחבר';
+      reconnectBtn.addEventListener('click', () => reconnectViaTracker(contact));
+      top.appendChild(name);
+      top.appendChild(reconnectBtn);
+
+      const meta = document.createElement('div');
+      meta.className = 'history-meta';
+      const date = document.createElement('span');
+      date.textContent = 'חיבור אחרון: ' + new Date(contact.lastConnectedAt).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = '🗑';
+      delBtn.setAttribute('aria-label', 'מחק איש קשר');
+      delBtn.addEventListener('click', () => deleteContact(contact.id));
+      meta.appendChild(date);
+      meta.appendChild(delBtn);
+
+      el.appendChild(top);
+      el.appendChild(meta);
+      container.appendChild(el);
+    });
+  }
+
+  document.getElementById('btn-open-contacts').addEventListener('click', () => {
+    renderContactsList();
+    document.getElementById('contacts-modal').hidden = false;
+  });
+  document.getElementById('btn-close-contacts').addEventListener('click', () => {
+    document.getElementById('contacts-modal').hidden = true;
+  });
+
+  // ---------- tracker-based reconnect ----------
+  //
+  // Manual, single-attempt (not an always-on background listener): opens
+  // one tracker connection for this specific contact's infohash, announces
+  // an offer, waits up to TRACKER_TIMEOUT_MS for the other side to also be
+  // announcing (they need the app open too), then hands off to the same
+  // connection machinery a fresh QR pairing uses.
+
+  function connectTrackerWs(url) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url);
+      const t = setTimeout(() => { ws.close(); reject(new Error('tracker connect timeout')); }, 6000);
+      ws.onopen = () => { clearTimeout(t); resolve(ws); };
+      ws.onerror = () => { clearTimeout(t); reject(new Error('tracker connect error')); };
+    });
+  }
+
+  async function startTrackerOffer(ws, infoHashBin, myPeerIdBin) {
+    hasShared = true;
+    myRole = 'inviter';
+    isReconnectAttempt = true;
+    pc = createPeerConnection();
+    setupDataChannel(pc.createDataChannel('chat'));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    const offerIdBin = bytesToBinaryStr(randomBytes(20));
+    pendingTrackerOfferId = offerIdBin;
+    ws.send(JSON.stringify({
+      action: 'announce',
+      info_hash: infoHashBin,
+      peer_id: myPeerIdBin,
+      numwant: 1,
+      uploaded: 0,
+      downloaded: 0,
+      left: 0,
+      event: 'started',
+      offers: [{ offer_id: offerIdBin, offer: { type: 'offer', sdp: pc.localDescription.sdp } }],
+    }));
+  }
+
+  async function respondToTrackerOffer(ws, infoHashBin, myPeerIdBin, msg) {
+    // Glare case: we may have an in-flight offering attempt of our own
+    // (startTrackerOffer) that lost the tie-break. Close it explicitly
+    // instead of just dropping the reference, or it keeps gathering/
+    // connecting in the background and can interfere with this one.
+    if (pc) { try { pc.close(); } catch (err) { /* already closed */ } }
+    hasShared = true;
+    myRole = 'invitee';
+    isReconnectAttempt = true;
+    pc = createPeerConnection();
+    pc.ondatachannel = (e) => setupDataChannel(e.channel);
+
+    await pc.setRemoteDescription({ type: 'offer', sdp: msg.offer.sdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await waitForIceGatheringComplete(pc);
+
+    ws.send(JSON.stringify({
+      action: 'announce',
+      info_hash: infoHashBin,
+      peer_id: myPeerIdBin,
+      to_peer_id: msg.peer_id,
+      answer: { type: 'answer', sdp: pc.localDescription.sdp },
+      offer_id: msg.offer_id,
+    }));
+  }
+
+  async function reconnectViaTracker(contact) {
+    if (pc) { try { pc.close(); } catch (err) { /* already closed */ } pc = null; channel = null; }
+    document.getElementById('contacts-modal').hidden = true;
+
+    const secretBytes = hexToBytes(contact.secret);
+    const infoHashBytes = await sha1Bytes(secretBytes);
+    const infoHashBin = bytesToBinaryStr(infoHashBytes);
+    const myPeerIdBin = bytesToBinaryStr(randomBytes(20));
+
+    let ws = null;
+    for (const url of TRACKER_URLS) {
+      try { ws = await connectTrackerWs(url); break; } catch (err) { /* try next tracker */ }
+    }
+    if (!ws) { showToast('לא ניתן להתחבר לשרת התיאום'); return; }
+
+    showToast('מחפשים את ' + contact.tag + '...');
+    let resolved = false;
+    const timeoutId = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      ws.close();
+      showToast(contact.tag + ' לא נמצא/ה כרגע. ודאו שהאפליקציה פתוחה אצל שניכם ונסו שוב.');
+    }, TRACKER_TIMEOUT_MS);
+
+    ws.onmessage = async (event) => {
+      if (resolved) return;
+      let msg;
+      try { msg = JSON.parse(event.data); } catch (err) { return; }
+      if (msg.info_hash !== infoHashBin) return;
+
+      if (msg.offer && msg.offer_id && !msg.answer) {
+        // Both sides may announce an offer at once (glare) - deterministic
+        // tie-break so only one side answers instead of two connections
+        // forming.
+        if (myPeerIdBin > msg.peer_id) {
+          resolved = true;
+          clearTimeout(timeoutId);
+          await respondToTrackerOffer(ws, infoHashBin, myPeerIdBin, msg);
+          setTimeout(() => ws.close(), 3000);
+        }
+      } else if (msg.answer && msg.offer_id === pendingTrackerOfferId) {
+        resolved = true;
+        clearTimeout(timeoutId);
+        await pc.setRemoteDescription({ type: 'answer', sdp: msg.answer.sdp });
+        setTimeout(() => ws.close(), 3000);
+      }
+    };
+
+    await startTrackerOffer(ws, infoHashBin, myPeerIdBin);
   }
 
   // ---------- beep ----------
@@ -168,11 +540,25 @@
 
   function createPeerConnection() {
     const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    let disconnectTimer = null;
     conn.oniceconnectionstatechange = () => {
       const state = conn.iceConnectionState;
       if (state === 'checking' && hasShared) showScreen('connecting');
-      if (state === 'failed' || state === 'disconnected') {
+      if (state === 'failed') {
+        clearTimeout(disconnectTimer);
         showError('החיבור נכשל. נסו ליצור הזמנה חדשה.');
+      } else if (state === 'disconnected') {
+        // Transient - WebRTC can and often does recover from this on its
+        // own (brief network hiccup) without ever reaching 'failed'. Give
+        // it a few seconds before treating it as a real disconnect.
+        clearTimeout(disconnectTimer);
+        disconnectTimer = setTimeout(() => {
+          if (conn.iceConnectionState === 'disconnected') {
+            showError('החיבור נכשל. נסו ליצור הזמנה חדשה.');
+          }
+        }, 5000);
+      } else {
+        clearTimeout(disconnectTimer);
       }
     };
     return conn;
@@ -185,6 +571,11 @@
       showScreen('chat');
       document.getElementById('screen-chat').classList.add('active');
       renderHistory();
+      if (!isReconnectAttempt && myRole === 'inviter') {
+        const secretHex = bytesToHex(randomBytes(16));
+        channel.send(JSON.stringify({ type: 'pairing-secret', secret: secretHex }));
+        saveContact(document.getElementById('invite-tag').value.trim(), secretHex);
+      }
     };
     // ch may already be 'open' by the time this runs (e.g. answerer side,
     // received via ondatachannel after the handshake already completed) -
@@ -203,6 +594,12 @@
     let msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
 
+    if (msg.type === 'pairing-secret') {
+      if (!isReconnectAttempt) {
+        saveContact(document.getElementById('invite-tag').value.trim(), msg.secret);
+      }
+      return;
+    }
     if (msg.type === 'file-meta') {
       incomingFile = { meta: msg, chunks: [] };
       return;
@@ -237,6 +634,8 @@
   async function startAsInviter() {
     myRole = 'inviter';
     hasShared = false;
+    isReconnectAttempt = false;
+    document.getElementById('invite-tag').value = getLastTag();
     pc = createPeerConnection();
     setupDataChannel(pc.createDataChannel('chat'));
 
@@ -251,6 +650,7 @@
   async function startAsInvitee(offerSdp) {
     myRole = 'invitee';
     hasShared = false;
+    isReconnectAttempt = false;
     pc = createPeerConnection();
     pc.ondatachannel = (e) => setupDataChannel(e.channel);
 

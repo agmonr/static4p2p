@@ -30,12 +30,17 @@
       <div class="link-row">
         <input id="invite-link" type="text" readonly>
       </div>
+      <div class="link-row">
+        <input id="invite-tag" type="text" placeholder="תיוג (לדוגמה: שם החבר)">
+      </div>
       <div class="actions">
         <button id="btn-copy" class="btn btn-primary">העתק קישור</button>
         <button id="btn-whatsapp" class="btn btn-whatsapp">שלח בוואטסאפ</button>
       </div>
 
       <button id="btn-scan-instead" class="link-btn">📷 או סרוק ברקוד של חבר</button>
+      <button id="btn-open-history" class="link-btn">🕘 קישורים קודמים</button>
+      <button id="btn-open-contacts" class="link-btn">👥 אנשי קשר (חיבור אוטומטי)</button>
     </section>
 
     <section id="screen-waiting" class="screen">
@@ -89,6 +94,27 @@
     <div class="scan-frame"></div>
     <p class="scan-hint">כוונו למצלמת הברקוד</p>
     <button id="btn-cancel-scan" class="btn btn-secondary">ביטול</button>
+  </div>
+
+  <div id="history-modal" class="modal mirror-modal" hidden>
+    <div class="mirror-modal-card">
+      <button id="btn-close-history" class="modal-close" aria-label="סגור">✕</button>
+      <h2>קישורים קודמים</h2>
+      <p class="subtitle">יומן בלבד — קישור ישן לא ניתן לחיבור מחדש, כל שיחה חדשה דורשת הזמנה חדשה.</p>
+      <div id="history-list" class="history-list"></div>
+    </div>
+  </div>
+
+  <div id="contacts-modal" class="modal mirror-modal" hidden>
+    <div class="mirror-modal-card">
+      <button id="btn-close-contacts" class="modal-close" aria-label="סגור">✕</button>
+      <h2>אנשי קשר</h2>
+      <p class="subtitle">
+        נשמרים אוטומטית אחרי חיבור מוצלח. "התחבר" מנסה לאתר את הצד השני דרך שרת תיאום ציבורי (כמו טורנט) —
+        עובד רק אם שניכם פותחים את זה בערך באותו זמן, ולא פותר בעיות NAT/רשת.
+      </p>
+      <div id="contacts-list" class="history-list"></div>
+    </div>
   </div>
 
   <div id="mirror-modal" class="modal mirror-modal" hidden>

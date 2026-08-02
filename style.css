@@ -147,6 +147,14 @@ html, body {
   cursor: pointer;
   color: #fff;
   transition: transform 0.08s ease, opacity 0.15s ease;
+  flex: 0 1 auto;
+}
+
+/* Only grow/get a minimum width when laid out inside an actions row -
+   otherwise (e.g. the lone restart button on the error screen, a direct
+   child of the column-flex .screen) it stretches to fill the screen's
+   cross-axis instead of sizing to its own content. */
+.actions .btn {
   flex: 1 1 auto;
   min-width: 120px;
 }
@@ -437,6 +445,78 @@ html, body {
 .toast.visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+.history-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: right;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.history-empty {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+.history-entry {
+  background: #fff;
+  border: 1px solid #d0d7db;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.history-entry-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-tag-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid #d0d7db;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.history-role {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.history-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.contact-name { font-weight: 600; flex: 1 1 auto; }
+
+.btn-sm { padding: 6px 12px; font-size: 13px; min-width: 0; flex: 0 0 auto; }
+
+.history-actions { display: flex; gap: 6px; }
+
+.history-actions button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  color: var(--muted);
 }
 
 .modal-close {
