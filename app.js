@@ -692,8 +692,11 @@
     await pc.setLocalDescription(answer);
     await waitForIceGatheringComplete(pc);
 
+    // Bare token, not a full link: the recipient here is always the
+    // inviter, who is already sitting on this same page waiting for the
+    // answer - no need to re-send the origin+pathname they're already on.
     const token = await encodePayload({ t: 'a', s: pc.localDescription.sdp });
-    showInviteScreen('אישור הזמנה', 'שלח בחזרה לחבר', buildLink(token));
+    showInviteScreen('אישור הזמנה', 'שלח בחזרה לחבר', token);
   }
 
   async function startAsMirrorViewer(offerSdp) {
@@ -708,8 +711,9 @@
     await pc.setLocalDescription(answer);
     await waitForIceGatheringComplete(pc);
 
+    // Same reasoning as the invitee answer above - bare token, no link.
     const token = await encodePayload({ t: 'a', s: pc.localDescription.sdp, m: true });
-    showInviteScreen('אישור שיקוף', 'שלח בחזרה למכשיר המקורי', buildLink(token));
+    showInviteScreen('אישור שיקוף', 'שלח בחזרה למכשיר המקורי', token);
   }
 
   function setupMirrorViewerChannel(ch) {
@@ -926,7 +930,10 @@
     // redirect it once we have a link - opening after the await risks the
     // browser treating it as an unrequested popup and blocking it.
     const win = window.open('', '_blank');
-    const shortLink = (await shortenLink(link)) || link;
+    // Answers are a bare token (see startAsInvitee/startAsMirrorViewer),
+    // not a URL - shortener services reject those, and there's no origin
+    // prefix to trim off anyway, so skip straight to sending it as-is.
+    const shortLink = link.startsWith('http') ? ((await shortenLink(link)) || link) : link;
     if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(shortLink);
     afterShare();
   });
@@ -1083,6 +1090,53 @@
 
   document.getElementById('btn-mirror-scan-answer').addEventListener('click', () => {
     startScan((data) => applyMirrorAnswer(data));
+  });
+
+  // ---------- paste-image QR decode (clipboard screenshot of a barcode) ----------
+  //
+  // Same jsQR decoder the camera scanner feeds live video frames into,
+  // fed a pasted image instead - covers the case of a QR forwarded as a
+  // screenshot (e.g. received in WhatsApp Desktop) with no camera handy.
+
+  async function decodeQrFromImageFile(file) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      return code ? code.data : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  document.addEventListener('paste', async (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const imageItem = Array.from(items).find((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    if (!imageItem) return; // ordinary text paste - leave it to the browser's default handling
+
+    e.preventDefault();
+    const data = await decodeQrFromImageFile(imageItem.getAsFile());
+    if (!data) { showToast('לא זוהה ברקוד בתמונה שהודבקה'); return; }
+
+    // Route the decoded text exactly like the matching camera-scan button
+    // would, based on which "receive" surface is currently on screen.
+    if (!document.getElementById('mirror-modal').hidden) {
+      applyMirrorAnswer(data);
+    } else if (document.getElementById('screen-waiting').classList.contains('active')
+        && !document.getElementById('receive-answer-box').hidden) {
+      applyAnswer(data);
+    } else if (document.getElementById('screen-invite').classList.contains('active')) {
+      if (pc) { pc.close(); pc = null; channel = null; }
+      route(data);
+    } else {
+      showToast('הודבק ברקוד אך אין כרגע מסך שמצפה לו');
+    }
   });
 
   // ---------- init ----------
