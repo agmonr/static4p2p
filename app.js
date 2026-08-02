@@ -1243,18 +1243,10 @@
     }
   }
 
-  document.addEventListener('paste', async (e) => {
-    const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    const imageItem = Array.from(items).find((it) => it.kind === 'file' && it.type.startsWith('image/'));
-    if (!imageItem) return; // ordinary text paste - leave it to the browser's default handling
-
-    e.preventDefault();
-    const data = await decodeQrFromImageFile(imageItem.getAsFile());
-    if (!data) { showToast('לא זוהה ברקוד בתמונה שהודבקה'); return; }
-
-    // Route the decoded text exactly like the matching camera-scan button
-    // would, based on which "receive" surface is currently on screen.
+  // Route the decoded text exactly like the matching camera-scan button
+  // would, based on which "receive" surface is currently on screen.
+  function routeScannedImageData(data) {
+    if (!data) { showToast('לא זוהה ברקוד בתמונה'); return; }
     if (!document.getElementById('mirror-modal').hidden) {
       applyMirrorAnswer(data);
     } else if (document.getElementById('screen-waiting').classList.contains('active')
@@ -1268,6 +1260,51 @@
     } else {
       showToast('הודבק ברקוד אך אין כרגע מסך שמצפה לו');
     }
+  }
+
+  document.addEventListener('paste', async (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const imageItem = Array.from(items).find((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    if (!imageItem) return; // ordinary text paste - leave it to the browser's default handling
+
+    e.preventDefault();
+    routeScannedImageData(await decodeQrFromImageFile(imageItem.getAsFile()));
+  });
+
+  // ---------- explicit "paste image" button (Android fallback) ----------
+  //
+  // On Android, long-pressing a text field's native "Paste" almost never
+  // surfaces image clipboard content into the DOM paste event above - it's
+  // built for text. Async Clipboard API's read() bypasses that entirely by
+  // pulling straight from the OS clipboard on a button tap.
+
+  async function pasteImageFromClipboard() {
+    if (!navigator.clipboard || !navigator.clipboard.read) {
+      showToast('הדפדפן לא תומך בהדבקת תמונה - נסו להעתיק את הקישור כטקסט');
+      return;
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          routeScannedImageData(await decodeQrFromImageFile(blob));
+          return;
+        }
+      }
+      showToast('לא נמצאה תמונה בהעתקה - העתיקו קודם את התמונה מוואטסאפ');
+    } catch (err) {
+      console.warn('pasteImageFromClipboard failed:', err.name, err.message);
+      showToast('לא ניתן לגשת להעתקה - ודאו שהעתקתם תמונה ונסו שוב');
+    }
+  }
+
+  const pasteImageButtonIds = ['btn-paste-answer', 'btn-mirror-paste-answer', 'btn-paste-instead'];
+  pasteImageButtonIds.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', pasteImageFromClipboard);
   });
 
   // ---------- message font size (persists across sessions) ----------
