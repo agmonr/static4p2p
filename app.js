@@ -1062,11 +1062,29 @@
     const modal = document.getElementById('scan-modal');
     const video = document.getElementById('scan-video');
     const canvas = document.getElementById('scan-canvas');
+
+    // Some in-app browsers (WhatsApp/Instagram/Facebook link previews, in
+    // particular) run pages in a restricted webview that doesn't expose
+    // getUserMedia at all - fails silently as a generic camera error
+    // otherwise, which is indistinguishable from a denied permission.
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast('הדפדפן הזה לא תומך בגישה למצלמה - פתחו את הקישור בספארי/כרום ולא בתוך אפליקציה אחרת');
+      return;
+    }
+
     modal.hidden = false;
     try {
       scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     } catch (err) {
-      showToast('לא ניתן לגשת למצלמה');
+      console.error('getUserMedia failed:', err.name, err.message);
+      const messages = {
+        NotAllowedError: 'אין הרשאה למצלמה - אשרו גישה בהגדרות הדפדפן ונסו שוב',
+        PermissionDeniedError: 'אין הרשאה למצלמה - אשרו גישה בהגדרות הדפדפן ונסו שוב',
+        NotFoundError: 'לא נמצאה מצלמה במכשיר',
+        NotReadableError: 'המצלמה תפוסה על ידי אפליקציה אחרת',
+        OverconstrainedError: 'לא נמצאה מצלמה מתאימה במכשיר',
+      };
+      showToast(messages[err.name] || ('לא ניתן לגשת למצלמה (' + err.name + ')'));
       modal.hidden = true;
       return;
     }
