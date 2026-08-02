@@ -15,6 +15,7 @@ import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -38,7 +39,10 @@ class MainActivity : AppCompatActivity() {
     private var runnerService: ServiceRunnerService? = null
     private var pendingStartUrl: String? = null
 
-    private val defaultService = "https://agmonr.github.io/govapiportal/"
+    private val defaultServices = listOf(
+        "https://agmonr.github.io/govapiportal/trip-report.html",
+        "https://agmonr.github.io/static4p2p/chat.html"
+    )
 
     private val requiredPermissions: Array<String>
         get() {
@@ -65,6 +69,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            runnerService?.iconListener = { url, _ ->
+                runOnUiThread { if (services.contains(url)) rebuildChips() }
+            }
             services.forEach { runnerService?.ensureWebView(it) }
             (pendingStartUrl ?: currentUrl)?.let { showService(it) }
         }
@@ -88,7 +95,7 @@ class MainActivity : AppCompatActivity() {
         loadServices()
 
         if (services.isEmpty()) {
-            services.add(defaultService)
+            services.addAll(defaultServices)
             saveServices()
         }
 
@@ -194,6 +201,19 @@ class MainActivity : AppCompatActivity() {
                 )
                 lp.setMargins(8, 4, 8, 4)
                 layoutParams = lp
+            }
+            // Icon comes from the site's own favicon (WebView's onReceivedIcon,
+            // see ServiceRunnerService.iconListener) - not bundled, so it's
+            // absent until the page finishes loading once; the icon listener
+            // triggers a rebuild the moment it arrives.
+            val icon = runnerService?.getIcon(url)
+            if (icon != null) {
+                val iconView = ImageView(this).apply {
+                    setImageBitmap(icon)
+                    val size = 40
+                    layoutParams = LinearLayout.LayoutParams(size, size).apply { rightMargin = 12 }
+                }
+                chip.addView(iconView)
             }
             val label = TextView(this).apply {
                 text = shortLabel(url)

@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -56,8 +57,12 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
 
     private val binder = LocalBinder()
     private val webViews = LinkedHashMap<String, WebView>()
+    private val icons = LinkedHashMap<String, Bitmap>()
 
     var progressListener: ((url: String, progress: Int) -> Unit)? = null
+    var iconListener: ((url: String, icon: Bitmap) -> Unit)? = null
+
+    fun getIcon(url: String): Bitmap? = icons[url]
 
     private val sensorManager by lazy { getSystemService(Context.SENSOR_SERVICE) as SensorManager }
     private val locationManager by lazy { getSystemService(Context.LOCATION_SERVICE) as LocationManager }
@@ -139,6 +144,13 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
                     progressListener?.invoke(url, newProgress)
                 }
 
+                override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+                    if (icon != null) {
+                        icons[url] = icon
+                        iconListener?.invoke(url, icon)
+                    }
+                }
+
                 override fun onGeolocationPermissionsShowPrompt(
                     origin: String?,
                     callback: GeolocationPermissions.Callback?
@@ -163,6 +175,7 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
 
     fun removeWebView(url: String) {
         webViews.remove(url)?.destroy()
+        icons.remove(url)
         if (webViews.isEmpty()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
