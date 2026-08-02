@@ -116,19 +116,6 @@ html, body {
   border-radius: 20px 20px 0 0;
 }
 
-.qr-card-confetti {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    radial-gradient(circle, #a855f7 3px, transparent 3px),
-    radial-gradient(circle, #ec4899 3px, transparent 3px),
-    radial-gradient(circle, #fbbf24 3px, transparent 3px);
-  background-size: 70px 70px, 84px 84px, 58px 58px;
-  background-position: 8px 66px, 44px 26px, 20px 100px;
-  opacity: 0.45;
-}
-
 #qr-container, #mirror-qr-container {
   width: 100%;
   display: flex;
