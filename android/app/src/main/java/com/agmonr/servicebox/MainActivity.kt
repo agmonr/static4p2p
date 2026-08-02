@@ -5,14 +5,15 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -27,11 +28,11 @@ import androidx.core.content.ContextCompat
  * run in "server mode" (ServiceRunnerService's persistent foreground
  * WebView, see below) - only once the user actually picks one, not
  * pre-warmed on launch. */
-private data class AppEntry(val label: String, val url: String)
+private data class AppEntry(val icon: String, val name: String, val url: String)
 
 private val APPS = listOf(
-    AppEntry("🚗 נהיגה", "https://agmonr.github.io/govapiportal/trip-report.html"),
-    AppEntry("💬 שיחה", "https://agmonr.github.io/static4p2p/chat.html")
+    AppEntry("🚗", "נהיגה", "https://agmonr.github.io/govapiportal/trip-report.html"),
+    AppEntry("💬", "שיחה", "https://agmonr.github.io/static4p2p/chat.html")
 )
 
 class MainActivity : AppCompatActivity() {
@@ -134,6 +135,15 @@ class MainActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
+        // Re-attaching after detachCurrentWebView() (every onStop, and every
+        // app switch) can leave Chromium's internal layout stale - viewport-
+        // relative CSS (100dvh) in particular doesn't reliably recompute
+        // just because the container got its size back. Toggling visibility
+        // forces Android to run a full fresh measure/layout/draw pass,
+        // which reliably kicks WebView into re-notifying Chromium of its
+        // actual current size. requestLayout() alone was not enough here.
+        webView.visibility = View.GONE
+        webView.visibility = View.VISIBLE
     }
 
     private fun detachCurrentWebView() {
@@ -144,41 +154,45 @@ class MainActivity : AppCompatActivity() {
 
     private fun rebuildAppButtons() {
         chipContainer.removeAllViews()
+        // Home-screen-style tiles (icon square + label underneath) instead
+        // of the old horizontal chip row - the emoji is the icon itself
+        // (always available immediately, no dependency on the page's
+        // favicon having loaded yet).
         for (app in APPS) {
             val isActive = app.url == currentUrl
-            val chip = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(24, 12, 24, 12)
-                setBackgroundColor(
-                    ContextCompat.getColor(
-                        this@MainActivity,
-                        if (isActive) android.R.color.holo_blue_light else android.R.color.darker_gray
-                    )
-                )
-                val lp = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-                lp.setMargins(8, 4, 8, 4)
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(16, 16, 16, 16)
                 layoutParams = lp
                 setOnClickListener { showService(app.url) }
             }
-            // Icon comes from the site's own favicon (WebView's onReceivedIcon,
-            // see ServiceRunnerService.iconListener) - not bundled, so it's
-            // absent until the page finishes loading once; the icon listener
-            // triggers a rebuild the moment it arrives.
-            val icon = runnerService?.getIcon(app.url)
-            if (icon != null) {
-                val iconView = ImageView(this).apply {
-                    setImageBitmap(icon)
-                    val size = 40
-                    layoutParams = LinearLayout.LayoutParams(size, size).apply { rightMargin = 12 }
+            val iconView = TextView(this).apply {
+                text = app.icon
+                textSize = 32f
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(132, 132)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 28f
+                    setColor(
+                        ContextCompat.getColor(
+                            this@MainActivity,
+                            if (isActive) R.color.forest else R.color.forest_dark
+                        )
+                    )
                 }
-                chip.addView(iconView)
             }
-            val label = TextView(this).apply { text = app.label }
-            chip.addView(label)
-            chipContainer.addView(chip)
+            tile.addView(iconView)
+            val label = TextView(this).apply {
+                text = app.name
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setPadding(0, 12, 0, 0)
+            }
+            tile.addView(label)
+            chipContainer.addView(tile)
         }
     }
 

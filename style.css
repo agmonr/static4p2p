@@ -23,6 +23,11 @@ html, body {
 #app {
   display: flex;
   flex-direction: column;
+  /* dvh fallback: older WebView builds (Android System WebView doesn't
+     always track the newest Chromium) may not support dynamic viewport
+     units at all and would otherwise just drop the rule - 100vh keeps
+     the layout usable there instead of silently collapsing. */
+  height: 100vh;
   height: 100dvh;
   max-width: 480px;
   margin: 0 auto;

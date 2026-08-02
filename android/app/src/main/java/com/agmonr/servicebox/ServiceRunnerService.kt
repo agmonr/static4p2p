@@ -133,6 +133,13 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.setGeolocationEnabled(true)
+            // Without these two, WebView ignores the page's own <meta
+            // name="viewport"> tag and renders at a fixed ~980px desktop-ish
+            // width instead - exactly what made chat.html's mobile flex
+            // layout (height: 100dvh, no scroll by design) come out
+            // miscalculated and clipped instead of filling the screen.
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                     super.onPageFinished(view, loadedUrl)
