@@ -5,13 +5,38 @@
   // cellular networks use - it can discover a public address but can't
   // predict the port a peer-to-peer packet would arrive on, so direct
   // connection attempts silently fail when one peer is on cellular. Only
-  // a relay in the middle (TURN) fixes that, and this app has none
-  // configured - every commonly-cited "free public TURN" server tested
-  // (openrelay.metered.ca, expressturn, numb.viagenie.ca) turned out to
-  // be dead or rejecting the well-known demo credentials. Needs a real
-  // TURN credential (self-hosted coturn, or a signed-up free tier like
-  // Cloudflare/Metered/Twilio) to fix properly - see todo.txt phase 4.
-  const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+  // a relay in the middle (TURN) fixes that. Every commonly-cited "free
+  // public TURN" demo (openrelay.metered.ca, expressturn, numb.viagenie.ca)
+  // turned out to be dead or rejecting its well-known credentials -
+  // turn.elixir-webrtc.org is different: it mints short-lived credentials
+  // on request (no signup, no static secret to leak), and was verified
+  // working (actually allocates a relay candidate) before wiring in. Its
+  // own docs call it "an aid in development only," not a production
+  // guarantee - same "public infra, not owned by this app" tradeoff
+  // already made for the trackers and link shorteners.
+  const STUN_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const TURN_CRED_URL = 'https://turn.elixir-webrtc.org/?service=turn&username=static4p2p';
+
+  let cachedIceServers = null;
+  let cachedIceServersExpiry = 0;
+
+  async function getIceServers() {
+    if (cachedIceServers && Date.now() < cachedIceServersExpiry) return cachedIceServers;
+    try {
+      const res = await fetchWithTimeout(TURN_CRED_URL, { method: 'POST' }, 4000);
+      const cred = await res.json();
+      cachedIceServers = [...STUN_SERVERS, { urls: cred.uris, username: cred.username, credential: cred.password }];
+      // Refresh a bit early rather than risk a mid-connection credential expiry.
+      cachedIceServersExpiry = Date.now() + Math.max(0, (cred.ttl || 1728) - 120) * 1000;
+    } catch (err) {
+      // TURN unreachable - fall back to STUN-only rather than block
+      // connecting entirely. Retry soon instead of caching the failure
+      // for as long as a real credential would last.
+      cachedIceServers = STUN_SERVERS;
+      cachedIceServersExpiry = Date.now() + 30000;
+    }
+    return cachedIceServers;
+  }
   const HISTORY_KEY = 'p2p_chat_history';
   const FILE_CHUNK_SIZE = 16 * 1024;
   const FILE_BUFFERED_HIGH = 1_000_000;
@@ -459,7 +484,7 @@
     hasShared = true;
     myRole = 'inviter';
     isReconnectAttempt = true;
-    pc = createPeerConnection();
+    pc = await createPeerConnection();
     setupDataChannel(pc.createDataChannel('chat'));
 
     const offer = await pc.createOffer();
@@ -490,7 +515,7 @@
     hasShared = true;
     myRole = 'invitee';
     isReconnectAttempt = true;
-    pc = createPeerConnection();
+    pc = await createPeerConnection();
     pc.ondatachannel = (e) => setupDataChannel(e.channel);
 
     await pc.setRemoteDescription({ type: 'offer', sdp: msg.offer.sdp });
@@ -596,8 +621,8 @@
     });
   }
 
-  function createPeerConnection() {
-    const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  async function createPeerConnection() {
+    const conn = new RTCPeerConnection({ iceServers: await getIceServers() });
     let disconnectTimer = null;
     // 'checking' can otherwise sit forever with no further state change and
     // no feedback: on mobile, backgrounding this tab to send the answer via
@@ -718,7 +743,7 @@
     hasShared = false;
     isReconnectAttempt = false;
     document.getElementById('invite-tag').value = getLastTag();
-    pc = createPeerConnection();
+    pc = await createPeerConnection();
     setupDataChannel(pc.createDataChannel('chat'));
 
     const offer = await pc.createOffer();
@@ -733,7 +758,7 @@
     myRole = 'invitee';
     hasShared = false;
     isReconnectAttempt = false;
-    pc = createPeerConnection();
+    pc = await createPeerConnection();
     pc.ondatachannel = (e) => setupDataChannel(e.channel);
 
     await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
@@ -752,7 +777,7 @@
     myRole = 'mirror-viewer';
     isMirrorViewer = true;
     hasShared = false;
-    pc = createPeerConnection();
+    pc = await createPeerConnection();
     pc.ondatachannel = (e) => setupMirrorViewerChannel(e.channel);
 
     await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
@@ -1022,7 +1047,7 @@
       document.getElementById('mirror-modal').hidden = false;
       return;
     }
-    mirrorPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    mirrorPc = new RTCPeerConnection({ iceServers: await getIceServers() });
     mirrorPc.oniceconnectionstatechange = () => {
       if (mirrorPc.iceConnectionState === 'failed') {
         showToast('החיבור לשיקוף נכשל. נסו שוב.');
