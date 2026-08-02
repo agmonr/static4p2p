@@ -181,13 +181,24 @@
 
   // ---------- QR rendering ----------
 
+  // Matches the .qr-card content width in style.css (max-width minus
+  // padding) - the SDP payload is long enough that the resulting code
+  // needs 100+ modules per side, and rendering that at the old fixed
+  // 220x220 canvas (with no devicePixelRatio awareness, so also getting
+  // blurred by the browser's upscale on any retina-class screen) left
+  // each module only ~2 raw pixels wide - below what any phone camera can
+  // resolve. Render at devicePixelRatio so the browser downsamples a
+  // crisp image into the display size instead of blurring an upscale.
+  const QR_DISPLAY_SIZE = 300;
+
   function renderQR(container, text) {
     container.innerHTML = '';
+    const renderSize = Math.round(QR_DISPLAY_SIZE * (window.devicePixelRatio || 1));
     try {
       new QRCode(container, {
         text,
-        width: 220,
-        height: 220,
+        width: renderSize,
+        height: renderSize,
         correctLevel: QRCode.CorrectLevel.L,
       });
     } catch (err) {
