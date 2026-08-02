@@ -255,6 +255,13 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
               if (window.__sbBridgeInstalled) return;
               window.__sbBridgeInstalled = true;
 
+              // Lets a page tell it's running inside ServiceBox rather than
+              // a normal browser tab - e.g. trip-report.js uses this to skip
+              // its own navigator.wakeLock.request('screen') call, since
+              // this service's native sensor/location bridge (below) keeps
+              // delivering data with the screen off regardless.
+              window.__sbRunningAsService = true;
+
               window.LinearAccelerationSensor = undefined;
               window.Accelerometer = undefined;
 
