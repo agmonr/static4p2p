@@ -28,6 +28,10 @@
       </div>
       <button id="btn-scan-instead" class="link-btn">📷 או סרוק ברקוד של חבר</button>
       <button id="btn-paste-instead" class="link-btn">📋 או הדבק תמונת ברקוד</button>
+      <div id="invite-passcode-box" class="passcode-box" hidden>
+        <p class="subtitle" style="margin-bottom:4px;">קוד אימות - אמרו אותו לחבר בעל פה (לא באותה הודעה של הקישור!):</p>
+        <div id="invite-passcode" class="passcode-display"></div>
+      </div>
       <p id="invite-subtitle" class="subtitle">שלח אותי לחבר</p>
 
       <div class="link-row">
@@ -41,8 +45,22 @@
         <button id="btn-whatsapp" class="btn btn-whatsapp">שלח בוואטסאפ</button>
       </div>
 
+      <button id="btn-open-passcode" class="link-btn">🔑 שלח וקבל אוטומטית (קוד)</button>
       <button id="btn-open-history" class="link-btn">🕘 קישורים קודמים</button>
       <button id="btn-open-contacts" class="link-btn">👥 אנשי קשר (חיבור אוטומטי)</button>
+    </section>
+
+    <section id="screen-passcode-entry" class="screen">
+      <h1>הוזמנתם!</h1>
+      <p class="subtitle">הקלידו את קוד האימות שקיבלתם מהחבר בעל פה (לא מהקישור עצמו)</p>
+      <div class="link-row">
+        <input id="passcode-entry-input" type="text" inputmode="numeric" style="text-align:center; font-size:22px; letter-spacing:2px;">
+      </div>
+      <p id="passcode-entry-error" class="subtitle" style="color:#e05353;" hidden>קוד שגוי - נסו שוב</p>
+      <div class="actions">
+        <button id="btn-passcode-entry-cancel" class="btn btn-secondary">ביטול</button>
+        <button id="btn-passcode-entry-submit" class="btn btn-primary">המשך</button>
+      </div>
     </section>
 
     <section id="screen-waiting" class="screen">
@@ -136,6 +154,25 @@
         עובד רק אם שניכם פותחים את זה בערך באותו זמן, ולא פותר בעיות NAT/רשת.
       </p>
       <div id="contacts-list" class="history-list"></div>
+    </div>
+  </div>
+
+  <div id="passcode-modal" class="modal mirror-modal" hidden>
+    <div class="mirror-modal-card">
+      <button id="btn-close-passcode" class="modal-close" aria-label="סגור">✕</button>
+      <h2>התחברות עם קוד</h2>
+      <p class="subtitle">
+        אמרו לחבר את הקוד הזה בעל פה (או בשיחה נפרדת - לא באותה הודעה של קישור אחר),
+        או הקלידו כאן קוד שקיבלתם ממנו. שניכם צריכים להזין את אותו הקוד ולהיות עם האפליקציה פתוחה
+        בערך באותו זמן - זה לא פותר בעיות NAT/רשת.
+      </p>
+      <div class="link-row">
+        <input id="passcode-input" type="text" inputmode="numeric" style="text-align:center; font-size:22px; letter-spacing:2px;">
+      </div>
+      <div class="actions">
+        <button id="btn-passcode-regenerate" class="btn btn-secondary">קוד חדש</button>
+        <button id="btn-passcode-connect" class="btn btn-primary">התחבר</button>
+      </div>
     </div>
   </div>
 

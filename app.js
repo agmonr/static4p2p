@@ -56,6 +56,14 @@
   let isReconnectAttempt = false; // true when pc came from tracker reconnect, not a fresh QR pairing
   let pendingTrackerOfferId = null;
 
+  // Passcode verification for fresh offers (not the tracker-based passcode
+  // connect further below - this one is baked into every regular QR/link
+  // offer). Inviter side: the passcode currently shown for their active
+  // offer, kept so an entered value can be checked. Invitee side: the
+  // offer+expected hash held while waiting for the passcode screen.
+  let currentOfferPasscode = null;
+  let pendingInviteeOffer = null; // { sdp, passcodeHash }
+
   let mirrorPc = null;
   let mirrorChannel = null;
 
@@ -172,6 +180,12 @@
     return bytes;
   }
 
+  async function sha256Hex(str) {
+    const bytes = new TextEncoder().encode(str);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
   // BitTorrent tracker wire protocol encodes 20-byte fields (info_hash,
   // peer_id, offer_id) as JSON strings where each character's code point
   // is one raw byte (0-255) - not base64, not UTF-8 text. This round-trips
@@ -250,6 +264,10 @@
     document.getElementById('invite-subtitle').textContent = subtitle;
     document.getElementById('invite-link').value = link;
     document.getElementById('btn-scan-instead').hidden = myRole !== 'inviter';
+    // Passcode display is only meaningful for a fresh offer (the inviter
+    // sharing it out loud) - hide it for the answer/mirror-answer reuse of
+    // this same screen.
+    document.getElementById('invite-passcode-box').hidden = myRole !== 'inviter';
     renderQR(document.getElementById('qr-container'), link);
     showScreen('invite');
 
@@ -555,11 +573,15 @@
     }));
   }
 
-  async function reconnectViaTracker(contact) {
+  // Shared by both the saved-contacts reconnect (secretBytes from a stored
+  // 128-bit random secret) and the fresh passcode flow below (secretBytes
+  // from a short human-typed/spoken code - far less entropy, but the
+  // mechanism is identical: both sides derive the same tracker rendezvous
+  // point from a value only they should know, and glare-handling means
+  // neither side needs to know in advance who's "offering" vs "answering".
+  async function connectViaTrackerSecret(secretBytes, label, notFoundMsg) {
     if (pc) { try { pc.close(); } catch (err) { /* already closed */ } pc = null; channel = null; }
-    document.getElementById('contacts-modal').hidden = true;
 
-    const secretBytes = hexToBytes(contact.secret);
     const infoHashBytes = await sha1Bytes(secretBytes);
     const infoHashBin = bytesToBinaryStr(infoHashBytes);
     const myPeerIdBin = bytesToBinaryStr(randomBytes(20));
@@ -570,13 +592,13 @@
     }
     if (!ws) { showToast('לא ניתן להתחבר לשרת התיאום'); return; }
 
-    showToast('מחפשים את ' + contact.tag + '...');
+    showToast('מחפשים את ' + label + '...');
     let resolved = false;
     const timeoutId = setTimeout(() => {
       if (resolved) return;
       resolved = true;
       ws.close();
-      showToast(contact.tag + ' לא נמצא/ה כרגע. ודאו שהאפליקציה פתוחה אצל שניכם ונסו שוב.');
+      showToast(notFoundMsg);
     }, TRACKER_TIMEOUT_MS);
 
     ws.onmessage = async (event) => {
@@ -605,6 +627,56 @@
 
     await startTrackerOffer(ws, infoHashBin, myPeerIdBin);
   }
+
+  async function reconnectViaTracker(contact) {
+    document.getElementById('contacts-modal').hidden = true;
+    await connectViaTrackerSecret(
+      hexToBytes(contact.secret),
+      contact.tag,
+      contact.tag + ' לא נמצא/ה כרגע. ודאו שהאפליקציה פתוחה אצל שניכם ונסו שוב.'
+    );
+  }
+
+  // ---------- connect with a shared passcode (no QR/link at all) ----------
+  //
+  // Same tracker rendezvous as reconnecting a saved contact, but keyed by a
+  // short, spoken/typed code instead of a previously-established 128-bit
+  // secret - meant for "tell your friend a code out loud" pairing. Real
+  // tradeoff: a 6-digit code is ~20 bits of entropy, nowhere near the
+  // saved-contact secret's 128 bits. Someone pre-listening across all
+  // possible codes on the public tracker in real time, within the short
+  // TRACKER_TIMEOUT_MS window, and winning the glare race, could in theory
+  // intercept a pairing - astronomically less likely than guessing right
+  // and irrelevant once the window closes, but not the same guarantee.
+  async function connectWithPasscode(passcode) {
+    document.getElementById('passcode-modal').hidden = true;
+    const secretBytes = new TextEncoder().encode(passcode.trim());
+    await connectViaTrackerSecret(
+      secretBytes,
+      'החבר',
+      'לא נמצא חבר עם הקוד הזה כרגע. ודאו שהקוד נכון ושהאפליקציה פתוחה אצל שניכם, ונסו שוב.'
+    );
+  }
+
+  function generatePasscode() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  document.getElementById('btn-open-passcode').addEventListener('click', () => {
+    document.getElementById('passcode-input').value = generatePasscode();
+    document.getElementById('passcode-modal').hidden = false;
+  });
+  document.getElementById('btn-close-passcode').addEventListener('click', () => {
+    document.getElementById('passcode-modal').hidden = true;
+  });
+  document.getElementById('btn-passcode-regenerate').addEventListener('click', () => {
+    document.getElementById('passcode-input').value = generatePasscode();
+  });
+  document.getElementById('btn-passcode-connect').addEventListener('click', () => {
+    const code = document.getElementById('passcode-input').value.trim();
+    if (!code) return;
+    connectWithPasscode(code);
+  });
 
   // ---------- beep ----------
 
@@ -772,8 +844,15 @@
     await pc.setLocalDescription(offer);
     await waitForIceGatheringComplete(pc);
 
-    const token = await encodePayload({ t: 'o', s: pc.localDescription.sdp });
+    // Passcode is verified locally by the invitee (see route() below)
+    // before they can even generate an answer - so only someone who got
+    // this code from you, out loud/separately from the link itself, can
+    // get past that screen at all. Only the hash travels in the offer.
+    currentOfferPasscode = generatePasscode();
+    const passcodeHash = await sha256Hex(currentOfferPasscode);
+    const token = await encodePayload({ t: 'o', s: pc.localDescription.sdp, pc: passcodeHash });
     showInviteScreen('הזמנה', 'שלח אותי לחבר', buildLink(token));
+    document.getElementById('invite-passcode').textContent = currentOfferPasscode;
   }
 
   async function startAsInvitee(offerSdp) {
@@ -853,7 +932,18 @@
         await startAsMirrorViewer(obj.s);
       } else if (obj.t === 'o') {
         if (pc) { try { pc.close(); } catch (err) { /* already closed */ } pc = null; channel = null; }
-        await startAsInvitee(obj.s);
+        if (obj.pc) {
+          // Don't even generate an answer until the passcode (told to
+          // them by the inviter separately from the link/QR itself)
+          // checks out - see startAsInviter, which is where this hash
+          // came from.
+          pendingInviteeOffer = { sdp: obj.s, passcodeHash: obj.pc };
+          document.getElementById('passcode-entry-input').value = '';
+          document.getElementById('passcode-entry-error').hidden = true;
+          showScreen('passcode-entry');
+        } else {
+          await startAsInvitee(obj.s);
+        }
       } else if (obj.t === 'a') {
         await applyAnswer(rawText);
       } else {
@@ -1048,6 +1138,24 @@
   });
 
   document.getElementById('btn-restart').addEventListener('click', () => {
+    location.hash = '';
+    location.reload();
+  });
+
+  document.getElementById('btn-passcode-entry-submit').addEventListener('click', async () => {
+    const typed = document.getElementById('passcode-entry-input').value.trim();
+    if (!typed || !pendingInviteeOffer) return;
+    const hash = await sha256Hex(typed);
+    if (hash !== pendingInviteeOffer.passcodeHash) {
+      document.getElementById('passcode-entry-error').hidden = false;
+      return;
+    }
+    const offer = pendingInviteeOffer;
+    pendingInviteeOffer = null;
+    await startAsInvitee(offer.sdp);
+  });
+  document.getElementById('btn-passcode-entry-cancel').addEventListener('click', () => {
+    pendingInviteeOffer = null;
     location.hash = '';
     location.reload();
   });

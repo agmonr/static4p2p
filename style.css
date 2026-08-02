@@ -74,6 +74,23 @@ html, body {
   font-size: 15px;
 }
 
+.passcode-box {
+  margin: 4px 0 18px;
+  text-align: center;
+}
+
+.passcode-display {
+  display: inline-block;
+  background: #fff;
+  border: 2px dashed var(--tg-blue);
+  border-radius: 12px;
+  padding: 8px 18px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--tg-blue-dark);
+}
+
 .qr-card {
   background: #fff;
   border-radius: 20px;
