@@ -1,0 +1,102 @@
+/*
+ * Visual language borrowed from govapiportal's index.html: forest-green
+ * header gradient, mint page background, white raised cards, RTL-first.
+ * Trimmed down for a simple content page - no theme picker, no tables.
+ */
+:root {
+  --bg: #f2f7ee;
+  --fg: #24331f;
+  --muted: #5b6f56;
+  --border: #dfe9d8;
+  --accent: #2e7d46;
+  --surface: #eaf3e6;
+  --card: #ffffff;
+  --radius: 10px;
+  --maxw: 800px;
+
+  --forest-dark: #1b5e34;
+  --forest: #2e7d46;
+  --leaf: #4caf50;
+  --shadow: rgba(27, 94, 52, 0.16);
+  --shadow-soft: rgba(27, 94, 52, 0.10);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1c13;
+    --fg: #e6f0e1;
+    --muted: #9db393;
+    --border: #24382a;
+    --accent: #5fce8f;
+    --surface: #17251b;
+    --card: #142018;
+    --forest-dark: #123a24;
+    --forest: #1d5c34;
+    --leaf: #3f9a5c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.55 system-ui, "Segoe UI", Arial, sans-serif;
+}
+
+.wrap { max-width: var(--maxw); margin-inline: auto; padding: 1.5rem 1rem 4rem; }
+
+header.site {
+  border-radius: 18px;
+  margin-block-end: 1.25rem;
+  background: linear-gradient(135deg, var(--forest-dark), var(--forest) 60%, var(--leaf));
+  box-shadow: 0 8px 20px var(--shadow);
+  color: #fff;
+}
+
+header.site .wrap { padding-block: 1.1rem; display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem 1rem; }
+header.site h1 { font-size: 1.15rem; margin: 0; color: #fff; }
+header.site .site-by { display: flex; flex-direction: column; font-size: .78rem; color: #d7ecd2; margin-inline-start: auto; }
+header.site .site-disclaimer { font-size: .7rem; opacity: .85; }
+
+.lead { color: var(--muted); max-inline-width: 62ch; margin-block-end: 1.5rem; }
+
+.section { font-size: 1rem; margin-block: 2rem .75rem; color: var(--muted); font-weight: 600; }
+.section:first-of-type { margin-block-start: 0; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: .75rem;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  background: var(--card);
+  box-shadow: 0 6px 16px var(--shadow-soft);
+}
+.card h3 { margin: 0 0 .35rem; font-size: 1rem; }
+.card p { margin: 0; color: var(--muted); font-size: .9rem; }
+
+.steps { padding-inline-start: 1.3rem; color: var(--muted); }
+.steps li { margin-block-end: .5rem; }
+
+.notice { padding: .8rem 1rem; border-radius: var(--radius); margin-block-end: 1rem; background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
+
+.cta {
+  display: inline-block;
+  margin-block-start: .5rem;
+  padding: .8rem 1.6rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+  box-shadow: 0 6px 16px var(--shadow-soft);
+}
+.cta:hover { opacity: .92; }
+
+a { color: var(--accent); }

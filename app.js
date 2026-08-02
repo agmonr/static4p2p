@@ -1,0 +1,654 @@
+(() => {
+  'use strict';
+
+  const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const HISTORY_KEY = 'p2p_chat_history';
+  const FILE_CHUNK_SIZE = 16 * 1024;
+  const FILE_BUFFERED_HIGH = 1_000_000;
+  const FILE_BUFFERED_LOW = 500_000;
+
+  let pc = null;
+  let channel = null;
+  let myRole = null; // 'inviter' | 'invitee' | 'mirror-viewer'
+  let hasShared = false; // becomes true once the user copies/sends their link
+  let isMirrorViewer = false;
+
+  let mirrorPc = null;
+  let mirrorChannel = null;
+
+  let fileSending = false;
+  let incomingFile = null; // { meta, chunks }
+
+  // ---------- base64url + gzip helpers ----------
+
+  function base64UrlEncode(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function base64UrlDecode(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    const binary = atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  async function encodePayload(obj) {
+    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    if (typeof CompressionStream !== 'undefined') {
+      const cs = new CompressionStream('gzip');
+      const writer = cs.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const buf = await new Response(cs.readable).arrayBuffer();
+      return 'g' + base64UrlEncode(new Uint8Array(buf));
+    }
+    return 'r' + base64UrlEncode(bytes);
+  }
+
+  async function decodePayload(str) {
+    const flag = str[0];
+    const bytes = base64UrlDecode(str.slice(1));
+    if (flag === 'g') {
+      const ds = new DecompressionStream('gzip');
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const buf = await new Response(ds.readable).arrayBuffer();
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(buf)));
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  function extractPayloadToken(text) {
+    text = text.trim();
+    const m = text.match(/(?:^|[#?&])p=([^&\s]+)/);
+    if (m) return m[1];
+    return text;
+  }
+
+  function buildLink(token) {
+    return location.origin + location.pathname + '#p=' + token;
+  }
+
+  // ---------- screen management ----------
+
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
+    document.getElementById('screen-' + id).classList.add('active');
+  }
+
+  function showError(msg) {
+    document.getElementById('error-message').textContent = msg;
+    showScreen('error');
+  }
+
+  // Non-blocking replacement for alert() - alert() halts all page JS until
+  // dismissed, which is a bad UX for a chat app in general and can wedge
+  // the page entirely if nothing is present to dismiss it.
+  let toastTimer = null;
+  function showToast(msg) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      toast.className = 'toast';
+      document.getElementById('app').appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('visible'), 3000);
+  }
+
+  // ---------- QR rendering ----------
+
+  function renderQR(container, text) {
+    container.innerHTML = '';
+    try {
+      new QRCode(container, {
+        text,
+        width: 220,
+        height: 220,
+        correctLevel: QRCode.CorrectLevel.L,
+      });
+    } catch (err) {
+      container.textContent = 'לא ניתן להציג ברקוד (הקישור ארוך מדי)';
+    }
+  }
+
+  function showInviteScreen(title, subtitle, link) {
+    document.getElementById('invite-title').textContent = title;
+    document.getElementById('invite-subtitle').textContent = subtitle;
+    document.getElementById('invite-link').value = link;
+    document.getElementById('btn-scan-instead').hidden = myRole !== 'inviter';
+    renderQR(document.getElementById('qr-container'), link);
+    showScreen('invite');
+  }
+
+  // ---------- beep ----------
+
+  function playBeep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+      osc.onended = () => ctx.close();
+    } catch (err) { /* audio unavailable */ }
+  }
+
+  // ---------- WebRTC ----------
+
+  function waitForIceGatheringComplete(conn) {
+    if (conn.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise((resolve) => {
+      function check() {
+        if (conn.iceGatheringState === 'complete') {
+          conn.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      }
+      conn.addEventListener('icegatheringstatechange', check);
+      setTimeout(() => {
+        conn.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }, 6000);
+    });
+  }
+
+  function createPeerConnection() {
+    const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    conn.oniceconnectionstatechange = () => {
+      const state = conn.iceConnectionState;
+      if (state === 'checking' && hasShared) showScreen('connecting');
+      if (state === 'failed' || state === 'disconnected') {
+        showError('החיבור נכשל. נסו ליצור הזמנה חדשה.');
+      }
+    };
+    return conn;
+  }
+
+  function setupDataChannel(ch) {
+    channel = ch;
+    channel.binaryType = 'arraybuffer';
+    const onOpen = () => {
+      showScreen('chat');
+      document.getElementById('screen-chat').classList.add('active');
+      renderHistory();
+    };
+    // ch may already be 'open' by the time this runs (e.g. answerer side,
+    // received via ondatachannel after the handshake already completed) -
+    // in that case the 'open' event already fired and onopen would never
+    // be called if we only relied on the event.
+    if (ch.readyState === 'open') onOpen(); else ch.onopen = onOpen;
+    ch.onmessage = (e) => handleChannelMessage(e, false);
+  }
+
+  function handleChannelMessage(e, isMirror) {
+    if (typeof e.data !== 'string') {
+      // binary file chunk
+      if (incomingFile) incomingFile.chunks.push(e.data);
+      return;
+    }
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (err) { return; }
+
+    if (msg.type === 'file-meta') {
+      incomingFile = { meta: msg, chunks: [] };
+      return;
+    }
+    if (msg.type === 'file-end') {
+      if (!incomingFile) return;
+      const blob = new Blob(incomingFile.chunks, { type: incomingFile.meta.mime });
+      const url = URL.createObjectURL(blob);
+      addFileMessage(incomingFile.meta, url, false);
+      saveMessage(null, false, incomingFile.meta.ts, { file: { name: incomingFile.meta.name, mime: incomingFile.meta.mime } });
+      forwardToMirror({ text: '📎 ' + incomingFile.meta.name, ts: incomingFile.meta.ts, outgoing: false });
+      playBeep();
+      incomingFile = null;
+      return;
+    }
+    if (msg.type === 'mirror-history') {
+      msg.items.forEach((m) => addMessage(m.text, m.outgoing, m.ts));
+      return;
+    }
+    if (msg.type === 'mirror-relay') {
+      addMessage(msg.item.text, msg.item.outgoing, msg.item.ts);
+      playBeep();
+      return;
+    }
+    // plain chat text message
+    addMessage(msg.text, false, msg.ts);
+    saveMessage(msg.text, false, msg.ts);
+    forwardToMirror({ text: msg.text, ts: msg.ts, outgoing: false });
+    playBeep();
+  }
+
+  async function startAsInviter() {
+    myRole = 'inviter';
+    hasShared = false;
+    pc = createPeerConnection();
+    setupDataChannel(pc.createDataChannel('chat'));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    const token = await encodePayload({ t: 'o', s: pc.localDescription.sdp });
+    showInviteScreen('הזמנה', 'שלח אותי לחבר', buildLink(token));
+  }
+
+  async function startAsInvitee(offerSdp) {
+    myRole = 'invitee';
+    hasShared = false;
+    pc = createPeerConnection();
+    pc.ondatachannel = (e) => setupDataChannel(e.channel);
+
+    await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await waitForIceGatheringComplete(pc);
+
+    const token = await encodePayload({ t: 'a', s: pc.localDescription.sdp });
+    showInviteScreen('אישור הזמנה', 'שלח בחזרה לחבר', buildLink(token));
+  }
+
+  async function startAsMirrorViewer(offerSdp) {
+    myRole = 'mirror-viewer';
+    isMirrorViewer = true;
+    hasShared = false;
+    pc = createPeerConnection();
+    pc.ondatachannel = (e) => setupMirrorViewerChannel(e.channel);
+
+    await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await waitForIceGatheringComplete(pc);
+
+    const token = await encodePayload({ t: 'a', s: pc.localDescription.sdp, m: true });
+    showInviteScreen('אישור שיקוף', 'שלח בחזרה למכשיר המקורי', buildLink(token));
+  }
+
+  function setupMirrorViewerChannel(ch) {
+    channel = ch;
+    channel.binaryType = 'arraybuffer';
+    const onOpen = () => {
+      showScreen('chat');
+      document.getElementById('screen-chat').classList.add('active');
+      document.getElementById('chat-form').hidden = true;
+      document.getElementById('chat-toolbar').hidden = true;
+      document.getElementById('mirror-viewer-banner').hidden = false;
+    };
+    if (ch.readyState === 'open') onOpen(); else ch.onopen = onOpen;
+    ch.onmessage = (e) => handleChannelMessage(e, true);
+  }
+
+  async function applyAnswer(rawText) {
+    if (!pc) { showError('אין הזמנה פעילה. התחילו מחדש.'); return; }
+    if (pc.signalingState !== 'have-local-offer') { showToast('כבר מחוברים'); return; }
+    try {
+      const token = extractPayloadToken(rawText);
+      const obj = await decodePayload(token);
+      if (obj.t !== 'a') throw new Error('not-an-answer');
+      await pc.setRemoteDescription({ type: 'answer', sdp: obj.s });
+    } catch (err) {
+      showToast('הקישור לא תקין או שפג תוקפו');
+    }
+  }
+
+  async function route(rawText) {
+    const token = extractPayloadToken(rawText);
+    if (!token) { startAsInviter(); return; }
+    try {
+      const obj = await decodePayload(token);
+      if (obj.t === 'o' && obj.m) {
+        await startAsMirrorViewer(obj.s);
+      } else if (obj.t === 'o') {
+        await startAsInvitee(obj.s);
+      } else if (obj.t === 'a') {
+        await applyAnswer(rawText);
+      } else {
+        throw new Error('unknown payload type');
+      }
+    } catch (err) {
+      showError('הקישור לא תקין או שפג תוקפו');
+    }
+  }
+
+  // ---------- chat ----------
+
+  function addMessage(text, outgoing, ts) {
+    const el = document.createElement('div');
+    el.className = 'bubble ' + (outgoing ? 'out' : 'in');
+    el.appendChild(document.createTextNode(text));
+    el.appendChild(makeTimeSpan(ts));
+    appendBubble(el);
+  }
+
+  function addFileMessage(meta, url, outgoing) {
+    const el = document.createElement('div');
+    el.className = 'bubble ' + (outgoing ? 'out' : 'in');
+    if (meta.mime && meta.mime.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.className = 'bubble-image';
+      img.alt = meta.name;
+      el.appendChild(img);
+    } else {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = meta.name;
+      link.className = 'bubble-file-link';
+      link.textContent = '📎 ' + meta.name + ' (' + formatSize(meta.size) + ')';
+      el.appendChild(link);
+    }
+    el.appendChild(makeTimeSpan(meta.ts));
+    appendBubble(el);
+  }
+
+  function makeTimeSpan(ts) {
+    const time = document.createElement('span');
+    time.className = 'bubble-time';
+    time.textContent = new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    return time;
+  }
+
+  function appendBubble(el) {
+    const messages = document.getElementById('messages');
+    messages.appendChild(el);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function saveMessage(text, outgoing, ts) {
+    if (text == null) return; // file messages aren't persisted (blob data isn't practical to store)
+    const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+    history.push({ text, outgoing, ts });
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  }
+
+  function renderHistory() {
+    const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+    document.getElementById('messages').innerHTML = '';
+    history.forEach((m) => addMessage(m.text, m.outgoing, m.ts));
+  }
+
+  document.getElementById('chat-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text || !channel || channel.readyState !== 'open') return;
+    const ts = Date.now();
+    channel.send(JSON.stringify({ text, ts }));
+    addMessage(text, true, ts);
+    saveMessage(text, true, ts);
+    forwardToMirror({ text, ts, outgoing: true });
+    input.value = '';
+  });
+
+  // ---------- file / photo attachments ----------
+
+  async function sendFile(file) {
+    if (!channel || channel.readyState !== 'open' || fileSending) return;
+    fileSending = true;
+    document.getElementById('btn-attach').disabled = true;
+    document.getElementById('btn-camera').disabled = true;
+    try {
+      const id = 'f' + Date.now() + Math.random().toString(36).slice(2, 8);
+      const meta = { type: 'file-meta', id, name: file.name || 'photo.jpg', mime: file.type || 'application/octet-stream', size: file.size, ts: Date.now() };
+      channel.send(JSON.stringify(meta));
+
+      const buf = await file.arrayBuffer();
+      for (let offset = 0; offset < buf.byteLength; offset += FILE_CHUNK_SIZE) {
+        if (channel.bufferedAmount > FILE_BUFFERED_HIGH) {
+          await new Promise((resolve) => {
+            channel.bufferedAmountLowThreshold = FILE_BUFFERED_LOW;
+            channel.onbufferedamountlow = () => { channel.onbufferedamountlow = null; resolve(); };
+          });
+        }
+        channel.send(buf.slice(offset, offset + FILE_CHUNK_SIZE));
+      }
+      channel.send(JSON.stringify({ type: 'file-end', id }));
+
+      addFileMessage(meta, URL.createObjectURL(file), true);
+      saveMessage(null, true, meta.ts);
+      forwardToMirror({ text: '📎 ' + meta.name, ts: meta.ts, outgoing: true });
+    } finally {
+      fileSending = false;
+      document.getElementById('btn-attach').disabled = false;
+      document.getElementById('btn-camera').disabled = false;
+    }
+  }
+
+  document.getElementById('btn-attach').addEventListener('click', () => {
+    document.getElementById('file-input').click();
+  });
+  document.getElementById('btn-camera').addEventListener('click', () => {
+    document.getElementById('camera-input').click();
+  });
+  document.getElementById('file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) sendFile(file);
+  });
+  document.getElementById('camera-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) sendFile(file);
+  });
+
+  // ---------- sharing (main invite) ----------
+
+  function afterShare() {
+    hasShared = true;
+    document.getElementById('receive-answer-box').hidden = myRole !== 'inviter';
+    showScreen('waiting');
+  }
+
+  // navigator.clipboard.writeText() can hang indefinitely (not just reject)
+  // when the clipboard permission is stuck in "prompt" state with nothing
+  // able to answer it - race it against a timeout so the UI never blocks.
+  function copyToClipboard(text) {
+    const viaClipboardApi = (navigator.clipboard && navigator.clipboard.writeText)
+      ? navigator.clipboard.writeText(text)
+      : Promise.reject(new Error('clipboard API unavailable'));
+    return Promise.race([
+      viaClipboardApi,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('clipboard timeout')), 1500)),
+    ]).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (err) { /* best effort only */ }
+      document.body.removeChild(ta);
+    });
+  }
+
+  document.getElementById('btn-copy').addEventListener('click', async () => {
+    await copyToClipboard(document.getElementById('invite-link').value);
+    afterShare();
+  });
+
+  document.getElementById('btn-whatsapp').addEventListener('click', () => {
+    const link = document.getElementById('invite-link').value;
+    window.open('https://wa.me/?text=' + encodeURIComponent(link), '_blank');
+    afterShare();
+  });
+
+  document.getElementById('btn-apply-answer').addEventListener('click', () => {
+    const text = document.getElementById('answer-input').value;
+    if (text.trim()) applyAnswer(text);
+  });
+
+  document.getElementById('btn-restart').addEventListener('click', () => {
+    location.hash = '';
+    location.reload();
+  });
+
+  // ---------- mirror (relay conversation to another device, read-only) ----------
+
+  function forwardToMirror(item) {
+    if (mirrorChannel && mirrorChannel.readyState === 'open') {
+      mirrorChannel.send(JSON.stringify({ type: 'mirror-relay', item }));
+    }
+  }
+
+  async function startMirrorInvite() {
+    if (mirrorChannel && mirrorChannel.readyState === 'open') {
+      showToast('כבר משוקף למכשיר נוסף');
+      return;
+    }
+    if (mirrorPc && mirrorPc.signalingState === 'have-local-offer') {
+      // already mid-pairing - reopen the modal with the existing QR/link
+      // instead of abandoning it for a fresh RTCPeerConnection.
+      document.getElementById('mirror-modal').hidden = false;
+      return;
+    }
+    mirrorPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    mirrorPc.oniceconnectionstatechange = () => {
+      if (mirrorPc.iceConnectionState === 'failed') {
+        showToast('החיבור לשיקוף נכשל. נסו שוב.');
+      }
+    };
+    mirrorChannel = mirrorPc.createDataChannel('mirror');
+    mirrorChannel.binaryType = 'arraybuffer';
+    mirrorChannel.onopen = () => {
+      document.getElementById('mirror-modal').hidden = true;
+      document.getElementById('mirror-status').hidden = false;
+      const history = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+      mirrorChannel.send(JSON.stringify({ type: 'mirror-history', items: history }));
+    };
+
+    const offer = await mirrorPc.createOffer();
+    await mirrorPc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(mirrorPc);
+
+    const token = await encodePayload({ t: 'o', s: mirrorPc.localDescription.sdp, m: true });
+    const link = buildLink(token);
+    document.getElementById('mirror-link').value = link;
+    renderQR(document.getElementById('mirror-qr-container'), link);
+    document.getElementById('mirror-modal').hidden = false;
+  }
+
+  async function applyMirrorAnswer(rawText) {
+    if (!mirrorPc) return;
+    if (mirrorPc.signalingState !== 'have-local-offer') { showToast('כבר מחוברים'); return; }
+    try {
+      const token = extractPayloadToken(rawText);
+      const obj = await decodePayload(token);
+      if (obj.t !== 'a') throw new Error('not-an-answer');
+      await mirrorPc.setRemoteDescription({ type: 'answer', sdp: obj.s });
+    } catch (err) {
+      showToast('הקישור לא תקין או שפג תוקפו');
+    }
+  }
+
+  document.getElementById('btn-mirror').addEventListener('click', () => startMirrorInvite());
+  document.getElementById('btn-mirror-compose').addEventListener('click', () => startMirrorInvite());
+  document.getElementById('btn-close-mirror').addEventListener('click', () => {
+    document.getElementById('mirror-modal').hidden = true;
+  });
+  document.getElementById('btn-mirror-copy').addEventListener('click', () => {
+    copyToClipboard(document.getElementById('mirror-link').value);
+  });
+  document.getElementById('btn-mirror-whatsapp').addEventListener('click', () => {
+    const link = document.getElementById('mirror-link').value;
+    window.open('https://wa.me/?text=' + encodeURIComponent(link), '_blank');
+  });
+  document.getElementById('btn-mirror-apply-answer').addEventListener('click', () => {
+    const text = document.getElementById('mirror-answer-input').value;
+    if (text.trim()) applyMirrorAnswer(text);
+  });
+
+  // ---------- camera QR scanning ----------
+
+  let scanStream = null;
+  let scanRAF = null;
+
+  async function startScan(onResult) {
+    const modal = document.getElementById('scan-modal');
+    const video = document.getElementById('scan-video');
+    const canvas = document.getElementById('scan-canvas');
+    modal.hidden = false;
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (err) {
+      showToast('לא ניתן לגשת למצלמה');
+      modal.hidden = true;
+      return;
+    }
+    video.srcObject = scanStream;
+    await video.play();
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    function tick() {
+      if (!scanStream) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code && code.data) {
+          stopScan();
+          onResult(code.data);
+          return;
+        }
+      }
+      scanRAF = requestAnimationFrame(tick);
+    }
+    scanRAF = requestAnimationFrame(tick);
+  }
+
+  function stopScan() {
+    if (scanRAF) cancelAnimationFrame(scanRAF);
+    scanRAF = null;
+    if (scanStream) {
+      scanStream.getTracks().forEach((t) => t.stop());
+      scanStream = null;
+    }
+    document.getElementById('scan-modal').hidden = true;
+  }
+
+  document.getElementById('btn-cancel-scan').addEventListener('click', stopScan);
+
+  document.getElementById('btn-scan-instead').addEventListener('click', () => {
+    startScan((data) => {
+      if (pc) { pc.close(); pc = null; channel = null; }
+      route(data);
+    });
+  });
+
+  document.getElementById('btn-scan-answer').addEventListener('click', () => {
+    startScan((data) => applyAnswer(data));
+  });
+
+  document.getElementById('btn-mirror-scan-answer').addEventListener('click', () => {
+    startScan((data) => applyMirrorAnswer(data));
+  });
+
+  // ---------- init ----------
+
+  window.addEventListener('DOMContentLoaded', () => {
+    const hash = location.hash.slice(1);
+    if (hash) route(hash); else startAsInviter();
+  });
+})();

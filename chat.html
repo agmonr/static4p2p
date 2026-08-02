@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>שיחה פרטית</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="app-bar">
+    <span class="app-title">שיחה פרטית</span>
+  </header>
+
+  <main id="screens">
+
+    <section id="screen-invite" class="screen active">
+      <h1 id="invite-title">הזמנה</h1>
+      <div class="qr-card">
+        <div id="qr-container">
+          <div class="qr-loading">
+            <div class="spinner spinner-sm"></div>
+            <span>מייצר קוד...</span>
+          </div>
+        </div>
+      </div>
+      <p id="invite-subtitle" class="subtitle">שלח אותי לחבר</p>
+
+      <div class="link-row">
+        <input id="invite-link" type="text" readonly>
+      </div>
+      <div class="actions">
+        <button id="btn-copy" class="btn btn-primary">העתק קישור</button>
+        <button id="btn-whatsapp" class="btn btn-whatsapp">שלח בוואטסאפ</button>
+      </div>
+
+      <button id="btn-scan-instead" class="link-btn">📷 או סרוק ברקוד של חבר</button>
+    </section>
+
+    <section id="screen-waiting" class="screen">
+      <div class="spinner"></div>
+      <h1>מחכה לחיבור</h1>
+
+      <div id="receive-answer-box" class="receive-box" hidden>
+        <p class="subtitle">קיבלת תשובה מהחבר?</p>
+        <textarea id="answer-input" placeholder="הדבק כאן את הקישור שקיבלת"></textarea>
+        <div class="actions">
+          <button id="btn-apply-answer" class="btn btn-primary">התחבר</button>
+          <button id="btn-scan-answer" class="btn btn-secondary">📷 סרוק ברקוד</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-connecting" class="screen">
+      <div class="spinner"></div>
+      <h1>מתחבר</h1>
+    </section>
+
+    <section id="screen-chat" class="screen chat-screen">
+      <div id="chat-toolbar" class="chat-toolbar">
+        <button id="btn-mirror" class="link-btn">🔗 שקף למכשיר נוסף</button>
+        <span id="mirror-status" class="mirror-status" hidden>✓ משוקף</span>
+      </div>
+      <div id="mirror-viewer-banner" class="mirror-banner" hidden>👁 צפייה בלבד — שיקוף של שיחה ממכשיר אחר</div>
+      <div id="messages" class="messages"></div>
+      <form id="chat-form" class="chat-form">
+        <input type="file" id="file-input" hidden>
+        <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+        <button type="button" id="btn-attach" class="icon-btn" aria-label="צרף קובץ">📎</button>
+        <button type="button" id="btn-camera" class="icon-btn" aria-label="צלם תמונה">📷</button>
+        <button type="button" id="btn-mirror-compose" class="icon-btn" aria-label="שקף למכשיר נוסף">🔗</button>
+        <input id="chat-input" type="text" placeholder="הקלד הודעה" autocomplete="off">
+        <button type="submit" class="send-btn" aria-label="שלח">➤</button>
+      </form>
+    </section>
+
+    <section id="screen-error" class="screen">
+      <h1>אופס</h1>
+      <p id="error-message" class="subtitle">הקישור לא תקין או שפג תוקפו</p>
+      <button id="btn-restart" class="btn btn-primary">התחל מחדש</button>
+    </section>
+
+  </main>
+
+  <div id="scan-modal" class="modal" hidden>
+    <video id="scan-video" playsinline autoplay muted></video>
+    <canvas id="scan-canvas" hidden></canvas>
+    <div class="scan-frame"></div>
+    <p class="scan-hint">כוונו למצלמת הברקוד</p>
+    <button id="btn-cancel-scan" class="btn btn-secondary">ביטול</button>
+  </div>
+
+  <div id="mirror-modal" class="modal mirror-modal" hidden>
+    <div class="mirror-modal-card">
+      <button id="btn-close-mirror" class="modal-close" aria-label="סגור">✕</button>
+      <h2>שיקוף למכשיר נוסף</h2>
+      <p class="subtitle">פתחו את הקישור הזה במכשיר השני כדי לצפות בשיחה בזמן אמת</p>
+      <div class="qr-card"><div id="mirror-qr-container"></div></div>
+      <div class="link-row">
+        <input id="mirror-link" type="text" readonly>
+      </div>
+      <div class="actions">
+        <button id="btn-mirror-copy" class="btn btn-primary">העתק קישור</button>
+        <button id="btn-mirror-whatsapp" class="btn btn-whatsapp">שלח בוואטסאפ</button>
+      </div>
+      <div class="receive-box">
+        <p class="subtitle">קיבלתם תשובה מהמכשיר השני?</p>
+        <textarea id="mirror-answer-input" placeholder="הדבק כאן את הקישור שקיבלתם"></textarea>
+        <div class="actions">
+          <button id="btn-mirror-apply-answer" class="btn btn-primary">חבר שיקוף</button>
+          <button id="btn-mirror-scan-answer" class="btn btn-secondary">📷 סרוק ברקוד</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="app.js" defer></script>
+</body>
+</html>

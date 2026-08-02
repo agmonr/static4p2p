@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>שיחה פרטית — צ'אט P2P</title>
+  <link rel="stylesheet" href="./landing.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <h1>שיחה פרטית — צ'אט P2P</h1>
+      <span class="site-by">פרויקט של רם אגמון<span class="site-disclaimer">ללא שרת, ללא איסוף מידע</span></span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <p class="lead">
+      שיחה מוצפנת בין שני מכשירים בלבד, ישירות (WebRTC), ללא שרת מתווך ששומר או מעביר את ההודעות.
+      החיבור נוצר על ידי שיתוף קישור או סריקת ברקוד — לא נדרשת הרשמה.
+    </p>
+
+    <a class="cta" href="./chat.html">פתח שיחה חדשה ←</a>
+
+    <h2 class="section">איך זה עובד</h2>
+    <ol class="steps">
+      <li>פותחים את השיחה — נוצרת הזמנה עם ברקוד וקישור.</li>
+      <li>שולחים את הקישור לחבר (וואטסאפ, העתקה, או סריקת הברקוד ישירות).</li>
+      <li>החבר פותח את הקישור, מקבל "אישור הזמנה" ושולח אותו בחזרה.</li>
+      <li>ברגע שההתחברות מסתיימת — נפתחת שיחה חיה, ישירות בין המכשירים.</li>
+    </ol>
+
+    <h2 class="section">תכונות</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3>הצפנה מקצה לקצה</h3>
+        <p>החיבור עצמו מוצפן (WebRTC/DTLS) וההודעות עוברות ישירות בין המכשירים, לא דרך שרת.</p>
+      </div>
+      <div class="card">
+        <h3>קבצים ותמונות</h3>
+        <p>אפשר לצרף קובץ או לצלם תמונה ולשלוח אותה ישירות בתוך השיחה.</p>
+      </div>
+      <div class="card">
+        <h3>שיקוף למכשיר נוסף</h3>
+        <p>אפשר לשקף את השיחה (לצפייה בלבד) למכשיר שני שלכם, בזמן אמת.</p>
+      </div>
+      <div class="card">
+        <h3>סריקת ברקוד</h3>
+        <p>אפשר להתחבר גם על ידי סריקת הברקוד של החבר במצלמה, בלי לשלוח קישור בכלל.</p>
+      </div>
+    </div>
+
+    <h2 class="section">מגבלות ידועות</h2>
+    <div class="notice">
+      החיבור מבוסס על STUN בלבד (ללא שרת TURN) — במקרים מסוימים (רשתות עם NAT מגביל) החיבור הישיר עלול להיכשל.
+      שני הצדדים צריכים להיות עם הדף פתוח בזמן יצירת החיבור.
+    </div>
+  </main>
+</body>
+</html>

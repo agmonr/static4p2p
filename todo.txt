@@ -134,6 +134,13 @@ DataChannel:
 
 MediaStream:
 - voice
+
+NAT traversal:
+
+STUN alone is not enough for symmetric NAT / restrictive networks.
+Tracker-based signaling (section 6) solves rendezvous, not traversal.
+Need TURN relay (public or self-hosted) as fallback, or accept some
+peers simply cannot connect P2P.
 5. Secure Session Layer
 
 Create an application-level secure session.
@@ -176,7 +183,35 @@ DiscoveryProvider
  updateAddress()
 }
 
-Possible implementations:
+Primary implementation: BitTorrent tracker signaling
+
+Use WebTorrent-style WSS trackers (e.g. tracker.openwebtorrent.com,
+tracker.btorrent.xyz) as the rendezvous/signaling channel.
+
+Note: this is NOT the mainline Kademlia DHT. Browsers cannot open raw
+UDP sockets, so real BitTorrent DHT is out of reach client-side.
+WSS trackers are the browser-reachable equivalent — a public backend,
+just not one the app owns or hosts.
+
+Infohash = rendezvous point:
+
+infohash = hash(pubkeyA + pubkeyB + sharedSalt)
+
+Derive from a shared secret established during pairing (section 3),
+never from public info alone (e.g. not just hash(pubkey)). Otherwise
+anyone watching public trackers can enumerate who is talking to whom
+by observing swarm joins, even without reading message content.
+
+Groups (section 9): one infohash per group = one swarm. Swarm
+join/leave already models multi-peer membership, so group topology
+can build on this instead of a bespoke membership protocol.
+
+Limitations:
+- Rendezvous only. Does not solve NAT traversal (see section 4).
+- Peer must be actively announcing to be found — does not solve
+  offline delivery (see section 7).
+
+Other implementations:
 
 Local:
 QR
@@ -184,9 +219,9 @@ QR
 Future:
 libp2p DHT
 IPFS
-BitTorrent DHT
 
-The application should work without this initially.
+The application should work without any of this initially (QR-only
+pairing on a local network).
 
 7. Offline Message Fallback
 
@@ -286,17 +321,19 @@ Phase 1
 Static page
 Generate identity
 QR pairing
+Tracker-based discovery/signaling (section 6)
 WebRTC text chat
 Phase 2
 Voice calls
 Contact management
 Message history
 Phase 3
-Multi-peer groups
+Multi-peer groups (one infohash per group)
 Relay logic
 Peer health monitoring
 Phase 4
-DHT discovery
+libp2p DHT / IPFS discovery
+TURN relay fallback
 Offline delivery
 decentralized fallback
 
