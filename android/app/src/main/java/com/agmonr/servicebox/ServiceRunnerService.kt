@@ -173,17 +173,6 @@ class ServiceRunnerService : Service(), SensorEventListener, LocationListener {
         return webView
     }
 
-    fun removeWebView(url: String) {
-        webViews.remove(url)?.destroy()
-        icons.remove(url)
-        if (webViews.isEmpty()) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        } else {
-            updateNotification()
-        }
-    }
-
     fun runningCount(): Int = webViews.size
 
     private fun buildNotification(): Notification {

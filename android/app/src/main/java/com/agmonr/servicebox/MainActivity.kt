@@ -5,44 +5,46 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
-import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
+
+/** The two apps this launcher exists for. Not user-editable - there's no
+ * "paste a URL" flow anymore (that let anyone browse to any site, which
+ * both undermines the app's own single stated purpose and is exactly the
+ * kind of generic-WebView-wrapper pattern Play Store review flags). Both
+ * run in "server mode" (ServiceRunnerService's persistent foreground
+ * WebView, see below) - only once the user actually picks one, not
+ * pre-warmed on launch. */
+private data class AppEntry(val label: String, val url: String)
+
+private val APPS = listOf(
+    AppEntry("🚗 נהיגה", "https://agmonr.github.io/govapiportal/trip-report.html"),
+    AppEntry("💬 שיחה", "https://agmonr.github.io/static4p2p/chat.html")
+)
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webViewContainer: FrameLayout
-    private lateinit var urlInput: EditText
     private lateinit var chipContainer: LinearLayout
     private lateinit var progressBar: ProgressBar
 
     private val prefs by lazy { getSharedPreferences("servicebox", MODE_PRIVATE) }
-    private val services = mutableListOf<String>()
     private var currentUrl: String? = null
 
     private var runnerService: ServiceRunnerService? = null
     private var pendingStartUrl: String? = null
-
-    private val defaultServices = listOf(
-        "https://agmonr.github.io/govapiportal/trip-report.html",
-        "https://agmonr.github.io/static4p2p/chat.html"
-    )
 
     private val requiredPermissions: Array<String>
         get() {
@@ -69,11 +71,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            runnerService?.iconListener = { url, _ ->
-                runOnUiThread { if (services.contains(url)) rebuildChips() }
-            }
-            services.forEach { runnerService?.ensureWebView(it) }
-            (pendingStartUrl ?: currentUrl)?.let { showService(it) }
+            runnerService?.iconListener = { _, _ -> runOnUiThread { rebuildAppButtons() } }
+            // Restore whichever app was open last session, if any - but
+            // don't pre-warm the other one just because the app launched.
+            pendingStartUrl?.let { showService(it) }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -86,23 +87,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         webViewContainer = findViewById(R.id.webViewContainer)
-        urlInput = findViewById(R.id.urlInput)
         chipContainer = findViewById(R.id.serviceChipContainer)
         progressBar = findViewById(R.id.progressBar)
-        val addButton = findViewById<Button>(R.id.addButton)
 
         requestNeededPermissions()
-        loadServices()
 
-        if (services.isEmpty()) {
-            services.addAll(defaultServices)
-            saveServices()
-        }
-
-        addButton.setOnClickListener { addServiceFromInput() }
-
-        pendingStartUrl = prefs.getString("current_url", services.firstOrNull())
-        rebuildChips()
+        currentUrl = prefs.getString("current_url", null)
+        pendingStartUrl = currentUrl
+        rebuildAppButtons()
 
         val serviceIntent = Intent(this, ServiceRunnerService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
@@ -118,42 +110,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun addServiceFromInput() {
-        var url = urlInput.text.toString().trim()
-        if (url.isEmpty()) return
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "https://$url"
-        }
-        if (!services.contains(url)) {
-            services.add(url)
-            saveServices()
-        }
-        urlInput.text.clear()
-        showService(url)
-    }
-
-    private fun removeService(url: String) {
-        services.remove(url)
-        saveServices()
-        runnerService?.removeWebView(url)
-        if (currentUrl == url) {
-            detachCurrentWebView()
-            currentUrl = null
-            val next = services.firstOrNull()
-            if (next != null) {
-                showService(next)
-            } else {
-                prefs.edit().remove("current_url").apply()
-                rebuildChips()
-            }
-        } else {
-            rebuildChips()
-        }
-    }
-
-    /** Attaches the WebView for [url] into the container. The WebView itself
-     * lives in ServiceRunnerService and keeps running whether or not it's
-     * attached here. */
+    /** Attaches the WebView for [url] into the container, starting it in
+     * ServiceRunnerService (server mode) on first use. The WebView itself
+     * lives in the service and keeps running whether or not it's attached
+     * here. */
     private fun showService(url: String) {
         val service = runnerService
         if (service == null) {
@@ -164,7 +124,7 @@ class MainActivity : AppCompatActivity() {
         currentUrl = url
         prefs.edit().putString("current_url", url).apply()
         attachToContainer(service.ensureWebView(url))
-        rebuildChips()
+        rebuildAppButtons()
     }
 
     private fun attachToContainer(webView: WebView) {
@@ -182,10 +142,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun rebuildChips() {
+    private fun rebuildAppButtons() {
         chipContainer.removeAllViews()
-        for (url in services) {
-            val isActive = url == currentUrl
+        for (app in APPS) {
+            val isActive = app.url == currentUrl
             val chip = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(24, 12, 24, 12)
@@ -201,12 +161,13 @@ class MainActivity : AppCompatActivity() {
                 )
                 lp.setMargins(8, 4, 8, 4)
                 layoutParams = lp
+                setOnClickListener { showService(app.url) }
             }
             // Icon comes from the site's own favicon (WebView's onReceivedIcon,
             // see ServiceRunnerService.iconListener) - not bundled, so it's
             // absent until the page finishes loading once; the icon listener
             // triggers a rebuild the moment it arrives.
-            val icon = runnerService?.getIcon(url)
+            val icon = runnerService?.getIcon(app.url)
             if (icon != null) {
                 val iconView = ImageView(this).apply {
                     setImageBitmap(icon)
@@ -215,46 +176,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 chip.addView(iconView)
             }
-            val label = TextView(this).apply {
-                text = shortLabel(url)
-                setPadding(0, 0, 24, 0)
-                setOnClickListener { showService(url) }
-            }
-            val remove = TextView(this).apply {
-                text = "×"
-                setOnClickListener {
-                    removeService(url)
-                    Toast.makeText(this@MainActivity, "Removed ${shortLabel(url)}", Toast.LENGTH_SHORT).show()
-                }
-            }
+            val label = TextView(this).apply { text = app.label }
             chip.addView(label)
-            chip.addView(remove)
             chipContainer.addView(chip)
         }
-    }
-
-    private fun shortLabel(url: String): String {
-        return try {
-            val uri = Uri.parse(url)
-            (uri.host ?: url) + (uri.path?.takeIf { it.length > 1 } ?: "")
-        } catch (e: Exception) {
-            url
-        }
-    }
-
-    private fun loadServices() {
-        services.clear()
-        val raw = prefs.getString("services", null) ?: return
-        val arr = JSONArray(raw)
-        for (i in 0 until arr.length()) {
-            services.add(arr.getString(i))
-        }
-    }
-
-    private fun saveServices() {
-        val arr = JSONArray()
-        services.forEach { arr.put(it) }
-        prefs.edit().putString("services", arr.toString()).apply()
     }
 
     override fun onStop() {
