@@ -18,6 +18,8 @@
     <section id="screen-invite" class="screen active">
       <h1 id="invite-title">הזמנה</h1>
       <div class="qr-card">
+        <div class="qr-card-banner">🎉 בואו נתחבר 🎉</div>
+        <div class="qr-card-confetti"></div>
         <div id="qr-container">
           <div class="qr-loading">
             <div class="spinner spinner-sm"></div>
@@ -25,6 +27,7 @@
           </div>
         </div>
       </div>
+      <button id="btn-scan-instead" class="link-btn">📷 או סרוק ברקוד של חבר</button>
       <p id="invite-subtitle" class="subtitle">שלח אותי לחבר</p>
 
       <div class="link-row">
@@ -38,7 +41,6 @@
         <button id="btn-whatsapp" class="btn btn-whatsapp">שלח בוואטסאפ</button>
       </div>
 
-      <button id="btn-scan-instead" class="link-btn">📷 או סרוק ברקוד של חבר</button>
       <button id="btn-open-history" class="link-btn">🕘 קישורים קודמים</button>
       <button id="btn-open-contacts" class="link-btn">👥 אנשי קשר (חיבור אוטומטי)</button>
     </section>
@@ -65,6 +67,10 @@
     <section id="screen-chat" class="screen chat-screen">
       <div id="chat-toolbar" class="chat-toolbar">
         <button id="btn-mirror" class="link-btn">🔗 שקף למכשיר נוסף</button>
+        <div class="font-size-control">
+          <button id="btn-font-smaller" type="button" aria-label="הקטן גופן">א−</button>
+          <button id="btn-font-bigger" type="button" aria-label="הגדל גופן">א+</button>
+        </div>
         <span id="mirror-status" class="mirror-status" hidden>✓ משוקף</span>
       </div>
       <div id="mirror-viewer-banner" class="mirror-banner" hidden>👁 צפייה בלבד — שיקוף של שיחה ממכשיר אחר</div>
@@ -105,6 +111,21 @@
     </div>
   </div>
 
+  <div id="history-detail-modal" class="modal mirror-modal" hidden>
+    <div class="mirror-modal-card">
+      <button id="btn-close-history-detail" class="modal-close" aria-label="סגור">✕</button>
+      <h2 id="history-detail-title">קישור</h2>
+      <p class="subtitle">יומן בלבד — לא ניתן להתחבר איתו מחדש, רק לצפייה/העתקה.</p>
+      <div class="qr-card"><div id="history-detail-qr"></div></div>
+      <div class="link-row">
+        <input id="history-detail-link" type="text" readonly>
+      </div>
+      <div class="actions">
+        <button id="btn-history-detail-copy" class="btn btn-primary">העתק קישור</button>
+      </div>
+    </div>
+  </div>
+
   <div id="contacts-modal" class="modal mirror-modal" hidden>
     <div class="mirror-modal-card">
       <button id="btn-close-contacts" class="modal-close" aria-label="סגור">✕</button>
@@ -122,7 +143,11 @@
       <button id="btn-close-mirror" class="modal-close" aria-label="סגור">✕</button>
       <h2>שיקוף למכשיר נוסף</h2>
       <p class="subtitle">פתחו את הקישור הזה במכשיר השני כדי לצפות בשיחה בזמן אמת</p>
-      <div class="qr-card"><div id="mirror-qr-container"></div></div>
+      <div class="qr-card">
+        <div class="qr-card-banner">🎉 בואו נתחבר 🎉</div>
+        <div class="qr-card-confetti"></div>
+        <div id="mirror-qr-container"></div>
+      </div>
       <div class="link-row">
         <input id="mirror-link" type="text" readonly>
       </div>

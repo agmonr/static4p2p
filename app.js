@@ -117,37 +117,39 @@
     return location.origin + location.pathname + '#p=' + token;
   }
 
-  // ---------- link shortening (WhatsApp share only - cosmetic, best-effort) ----------
-  //
-  // The SDP payload link can run 700+ chars, which reads as a wall of
-  // noise in a WhatsApp message. No shortener owned by this app - two
-  // public, no-signup services (same "public infra, not app-owned"
-  // tradeoff already made for the tracker reconnect feature) are tried in
-  // turn; if both are unreachable (offline, blocked), callers fall back to
-  // the full link, so pairing still works without them.
-
   function fetchWithTimeout(url, options, timeoutMs) {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
     return fetch(url, Object.assign({}, options, { signal: controller.signal })).finally(() => clearTimeout(t));
   }
 
-  async function shortenLink(longUrl) {
-    // tinyurl first: in testing, is.gd's free API frequently returned
-    // "Error, database insert failed" (HTTP 200, so failures don't even
-    // throw - checked explicitly below) for brand-new long URLs, while
-    // tinyurl was consistently reliable.
-    try {
-      const res = await fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl), {}, 4000);
-      const text = (await res.text()).trim();
-      if (/^https:\/\//.test(text)) return text;
-    } catch (err) { /* try next service */ }
-    try {
-      const res = await fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encodeURIComponent(longUrl), {}, 4000);
-      const data = await res.json();
-      if (data && data.shorturl) return data.shorturl;
-    } catch (err) { /* fall back to the full link */ }
-    return null;
+  // ---------- share-as-image (WhatsApp share, no external service) ----------
+  //
+  // The SDP payload link runs 700+ chars - noise as WhatsApp text, and a
+  // URL shortener means trusting a third party to store the (one-time,
+  // but still sensitive) offer/answer SDP. Sharing the QR as an actual
+  // image sidesteps both: nothing to shorten, nothing sent through a
+  // service this app doesn't own. The recipient copies the image out of
+  // WhatsApp and pastes it back into this app (paste-image QR decode,
+  // above) instead of tapping a link. Needs the Web Share API's file
+  // support (Chrome/Safari on mobile since ~2021) - falls back to the
+  // plain-text link via wa.me on browsers without it (mainly desktop).
+
+  async function shareQrImage(qrContainerId, link, shareText) {
+    const canvas = document.querySelector('#' + qrContainerId + ' canvas');
+    if (canvas && navigator.share && navigator.canShare) {
+      try {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        const file = new File([blob], 'qr.png', { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], text: shareText });
+          return true;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return true; // user dismissed the share sheet - don't also fall back
+      }
+    }
+    return false;
   }
 
   // ---------- binary/hash helpers (used by tracker reconnect) ----------
@@ -354,9 +356,27 @@
 
       el.appendChild(top);
       el.appendChild(meta);
+      el.addEventListener('click', (e) => {
+        if (e.target === tagInput || actions.contains(e.target)) return;
+        showHistoryDetail(entry);
+      });
       container.appendChild(el);
     });
   }
+
+  function showHistoryDetail(entry) {
+    document.getElementById('history-detail-title').textContent = roleLabel(entry.role) + (entry.tag ? ' - ' + entry.tag : '');
+    document.getElementById('history-detail-link').value = entry.link;
+    renderQR(document.getElementById('history-detail-qr'), entry.link);
+    document.getElementById('history-detail-modal').hidden = false;
+  }
+
+  document.getElementById('btn-close-history-detail').addEventListener('click', () => {
+    document.getElementById('history-detail-modal').hidden = true;
+  });
+  document.getElementById('btn-history-detail-copy').addEventListener('click', () => {
+    copyToClipboard(document.getElementById('history-detail-link').value).then(() => showToast('הועתק'));
+  });
 
   document.getElementById('btn-open-history').addEventListener('click', () => {
     renderHistoryList();
@@ -1006,15 +1026,16 @@
 
   document.getElementById('btn-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('invite-link').value;
-    // Open the tab synchronously (still inside the click gesture) and
-    // redirect it once we have a link - opening after the await risks the
+    // Reserved synchronously, inside the click gesture, in case we need
+    // the text-link fallback - opening a tab after an await risks the
     // browser treating it as an unrequested popup and blocking it.
     const win = window.open('', '_blank');
-    // Answers are a bare token (see startAsInvitee/startAsMirrorViewer),
-    // not a URL - shortener services reject those, and there's no origin
-    // prefix to trim off anyway, so skip straight to sending it as-is.
-    const shortLink = link.startsWith('http') ? ((await shortenLink(link)) || link) : link;
-    if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(shortLink);
+    const shared = await shareQrImage('qr-container', link, 'סרקו כדי להתחבר');
+    if (shared) {
+      if (win) win.close();
+    } else if (win) {
+      win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
+    }
     afterShare();
   });
 
@@ -1097,8 +1118,12 @@
   document.getElementById('btn-mirror-whatsapp').addEventListener('click', async () => {
     const link = document.getElementById('mirror-link').value;
     const win = window.open('', '_blank');
-    const shortLink = (await shortenLink(link)) || link;
-    if (win) win.location.href = 'https://wa.me/?text=' + encodeURIComponent(shortLink);
+    const shared = await shareQrImage('mirror-qr-container', link, 'סרקו כדי להתחבר לשיקוף');
+    if (shared) {
+      if (win) win.close();
+    } else if (win) {
+      win.location.href = 'https://wa.me/?text=' + encodeURIComponent(link);
+    }
   });
   document.getElementById('btn-mirror-apply-answer').addEventListener('click', () => {
     const text = document.getElementById('mirror-answer-input').value;
@@ -1242,9 +1267,31 @@
     }
   });
 
+  // ---------- message font size (persists across sessions) ----------
+
+  const FONT_SIZE_KEY = 'p2p_msg_font_size';
+  const FONT_SIZE_MIN = 13;
+  const FONT_SIZE_MAX = 26;
+  const FONT_SIZE_DEFAULT = 16;
+
+  function getFontSize() {
+    const stored = parseInt(localStorage.getItem(FONT_SIZE_KEY), 10);
+    return Number.isFinite(stored) ? stored : FONT_SIZE_DEFAULT;
+  }
+
+  function setFontSize(size) {
+    size = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
+    document.documentElement.style.setProperty('--msg-font-size', size + 'px');
+    localStorage.setItem(FONT_SIZE_KEY, size);
+  }
+
+  document.getElementById('btn-font-smaller').addEventListener('click', () => setFontSize(getFontSize() - 1));
+  document.getElementById('btn-font-bigger').addEventListener('click', () => setFontSize(getFontSize() + 1));
+
   // ---------- init ----------
 
   window.addEventListener('DOMContentLoaded', () => {
+    setFontSize(getFontSize());
     const hash = location.hash.slice(1);
     if (hash) route(hash); else startAsInviter();
   });
